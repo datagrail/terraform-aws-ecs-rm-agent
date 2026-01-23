@@ -1,0 +1,94 @@
+name: pre-commit
+
+on:
+  pull_request:
+  merge_group:
+
+env:
+  IS_CI: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      ### Terraform Related
+      - name: Configure Terraform plugin cache
+        run: |
+          echo "TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache" >>"$GITHUB_ENV"
+          mkdir --parents "$HOME/.terraform.d/plugin-cache"
+
+      - name: Cache Terraform
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform -version
+
+      - name: Install terraform-docs
+        uses: jaxxstorm/action-install-gh-release@v2.1.0
+        with:
+          repo: terraform-docs/terraform-docs
+          tag: v0.19.0
+          cache: enable
+
+      - uses: actions/cache@v5
+        name: Cache tflint plugin dir
+        with:
+          path: ~/.tflint.d/plugins
+          key: ${{ runner.os }}-tflint-${{ hashFiles('.tflint.hcl') }}
+
+      - uses: terraform-linters/setup-tflint@v6
+        name: Setup TFLint
+        with:
+          tflint_version: latest
+
+      - name: Init TFLint
+        run: |
+          tflint --version
+          tflint --init
+        env:
+          # https://github.com/terraform-linters/tflint/blob/master/docs/user-guide/plugins.md#avoiding-rate-limiting
+          GITHUB_TOKEN: ${{ github.token }}
+
+      ### pre-commit related
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: 'pip'
+          cache-dependency-path: ./.github/workflows/pre-commit/requirements.txt
+
+      # We install it this way so it can be cached
+      - name: Install pre-commit
+        run: pip install -r ./.github/workflows/pre-commit/requirements.txt
+
+      - name: Cache pre-commit cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pre-commit/
+          key: pre-commit-4|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        run: |
+          base_sha=${{ github.event.pull_request.base.sha }}
+          head_sha=${{ github.event.pull_request.head.sha }}
+          if [ "${{ github.event_name}}" = "merge_group" ]; then
+            base_sha="${{ github.event.merge_group.base_sha }}"
+            head_sha="${{ github.event.merge_group.head_ref }}"
+          fi
+          pre-commit run --show-diff-on-failure --color=always --verbose --from-ref ${base_sha} --to-ref ${head_sha}
