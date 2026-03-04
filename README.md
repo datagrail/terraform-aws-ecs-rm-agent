@@ -43,26 +43,14 @@ Once the secret has been created, reference the secret's ARN in the `image_regis
 
 For more information about using non-AWS container images in AWS, see AWS's [documentation](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html).
 
-### Request Manager Agent Client Credentials
-
-DataGrail performs a [Client Credentials flow](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-credentials-flow) to get an authentication token to authenticate its requests. The Client ID and Secret are arbitrary values that you control.
-
-Create a secret in Secrets Manager or Parameter Store with the following key/value pair:
-
-```json
-{
-  "client_id": "<an arbitrary client ID, e.g., 'datagrail'>",
-  "client_secret": "<an arbitrary client secret (treat it like a password)>"
-}
-```
 
 Once the secret has been created, reference the secret's ARN in the `datagrail_agent_client_credentials_arn` variable in the configuration. The module will handle specifying the credentials location in the `DATAGRAIL_AGENT_CONFIG` environment variable.
 
-### Callback Token
+### DataGrail Platform API Key
 
-The Request Manager Agent uses a callback function to notify DataGrail that a request has been fulfilled. Requests require a callback API token to authenticate the request. This token will be provided to you by DataGrail.
+The Request Manager Agent requires an API key to authenticate with the DataGrail platform. This key is generated in the DataGrail UI and securely stored in your credentials manager. Each API key is associated with a specific Agent. If you intend to use multiple Agents, you must generate a unique API key for each one.
 
-Create a secret in Secrets Manager or Parameter Store with the following key/value pair:
+Create a secret in your credentials manager with the following key/value pairs:
 
 ```json
 {

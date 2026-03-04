@@ -1,56 +1,63 @@
 variable "project_name" {
   description = "The name of the project. The value will be used in resource names as a prefix."
   type        = string
-  default     = "datagrail-rm-agent"
+  default     = "rm-agent"
 }
 
-variable "connections" {
-  description = "Connection objects to instantiate. More information can be found in the [documentations](https://docs.datagrail.io/docs/integrations/internal-systems-integrations/request-manager-agent/connections/request-manager-agent-connections-setup)."
-  type = list(object({
-    name           = string
-    uuid           = string
-    capabilities   = list(string)
-    mode           = string
-    connector_type = string
-    queries = object({
-      access      = optional(list(any), [])
-      delete      = optional(list(any), [])
-      optout      = optional(list(any), [])
-      identifiers = optional(map(list(any)), {})
-      test        = optional(list(any), [])
-    })
-    credentials_location = string
-  }))
-  default = []
-}
+################################################################################
+# Environment Variables
+################################################################################
 
-variable "customer_domain" {
+variable "rm_customer_domain" {
   description = "The fully qualified domain name of your DataGrail environment, e.g. 'acme.datagrail.io'"
   type        = string
 }
 
-variable "bucket_name" {
+variable "rm_storage_manager" {
   description = "The name of the S3 bucket to store access and identifier request results. This *must* be the same bucket integrated with DataGrail."
+  type = object({
+    provider = string
+    bucket   = string
+  })
+  default = null
+}
+
+variable "rm_platform_credentials_location" {
+  description = "The ARN of the DataGrail platform API key in Secrets Manager or Parameter Store. For more information on creating the secret, see the [DataGrail Platform API Key](./README.md#callback-token) section in the README."
   type        = string
 }
 
-variable "credentials_manager" {
-  description = "The credentials manager used to store the credentials made available to the agent, e.g. the agent's OAuth client credentials, DataGrail callback token, and connector credentials."
-  type        = string
-  default     = "AWSSecretsManager"
+variable "rm_credentials_manager" {
+  description = "The credentials manager used to store the the DataGrail platform API key and connector credentials."
+  type = object({
+    provider = string
+  })
+  default = { provider : "AWSSecretsManager" }
   validation {
-    condition     = contains(["AWSSecretsManager", "AWSParameterStore"], var.credentials_manager)
-    error_message = "The 'credentials_manager' variable must be set to 'AWSSecretsManager' or 'AWSParameterStore'."
+    condition     = contains(["AWSSecretsManager", "AWSParameterStore"], var.rm_credentials_manager.provider)
+    error_message = "The 'credentials_manager.provider' variable must be set to 'AWSSecretsManager' or 'AWSParameterStore'."
   }
 }
 
+variable "rm_redis_url" {
+  description = "Connection string for a remote Redis instance."
+  type        = string
+  default     = null
+}
+
+variable "rm_job_timeout" {
+  description = "Max time (seconds) for a single job before timeout"
+  type        = string
+  default     = null
+}
+
 variable "loglevel" {
-  description = "The loglevel for the `datagrail-rm-agent` container.\n**WARNING:** The `DEBUG` loglevel will expose PII and credentials."
+  description = "The loglevel for the `rm-agent` container.\n**WARNING:** The `DEBUG` loglevel will expose PII and credentials."
   type        = string
   default     = "INFO"
   validation {
-    condition     = contains(["INFO", "DEBUG"], upper(var.loglevel))
-    error_message = "Loglevel must be INFO or DEBUG."
+    condition     = contains(["INFO", "DEBUG", "WARNING"], upper(var.loglevel))
+    error_message = "Loglevel must be INFO, DEBUG, or WARNING."
   }
 }
 
@@ -59,21 +66,12 @@ variable "loglevel" {
 ############
 
 variable "vpc_id" {
-  description = "The ID of the VPC to place the agent into."
+  description = "The ID of the VPC to place the Agent into."
   type        = string
 }
 
-variable "public_subnet_ids" {
-  description = "The IDs of the public subnets for the load balancer to be placed into."
-  type        = list(string)
-  validation {
-    condition     = length(var.public_subnet_ids) >= 2
-    error_message = "At least two public subnets must be specified."
-  }
-}
-
 variable "private_subnet_ids" {
-  description = "The ID(s) of the private subnet(s) to put the datagrail-rm-agent ECS task(s) into."
+  description = "The ID(s) of the private subnet(s) to put the `rm-agent` ECS task(s) into."
   type        = list(string)
   validation {
     condition     = length(var.private_subnet_ids) >= 2
@@ -81,31 +79,6 @@ variable "private_subnet_ids" {
   }
 }
 
-################################################################################
-# Load Balancer
-################################################################################
-
-variable "load_balancer_ingress_rules" {
-  description = "Additional ingress rules for the load balancer security group."
-  type = map(object({
-    cidr_ipv4   = optional(string)
-    cidr_ipv6   = optional(string)
-    description = optional(string)
-  }))
-  default = {}
-}
-
-variable "load_balancer_ssl_policy" {
-  description = "Load balancer SSL policy."
-  type        = string
-  default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-}
-
-
-variable "certificate_arn" {
-  description = "The ARN of the TLS certificate for the load balancer."
-  type        = string
-}
 
 ################################################################################
 # Task Execution - IAM Role
@@ -202,30 +175,4 @@ variable "agent_container_memory" {
 variable "image_registry_credentials_arn" {
   description = "The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README."
   type        = string
-}
-
-variable "datagrail_callback_token_arn" {
-  description = "The ARN of the callback token in Secrets Manager or Parameter Store. For more information on creating the secret, see the [Callback Token](./README.md#callback-token) section in the README."
-  type        = string
-}
-
-variable "datagrail_agent_client_credentials_arn" {
-  description = "The ARN of the Request Manager Agent Client Credentials in Secrets Manager or Parameter Store. FOr more information on creating the secret, see the "
-  type        = string
-}
-
-################################################################################
-# Route53 Record
-################################################################################
-
-variable "agent_subdomain" {
-  description = "The subdomain of the agent."
-  type        = string
-  default     = "datagrail-rm-agent"
-}
-
-variable "hosted_zone_name" {
-  description = "The name of the Route53 hosted zone where the public DataGrail agent subdomain will be created."
-  type        = string
-  default     = null
 }
