@@ -1,5 +1,39 @@
 data "aws_region" "current" {}
 
+data "aws_subnet" "private" {
+  for_each = toset(var.private_subnet_ids)
+  id       = each.value
+}
+
+data "aws_route_table" "private" {
+  for_each  = toset(var.private_subnet_ids)
+  subnet_id = each.value
+}
+
+locals {
+  default_tags = {
+    ManagedBy = "Terraform"
+    Module    = "terraform-aws-ecs-rm-agent"
+  }
+  tags = merge(local.default_tags, var.tags)
+
+  # Extract availability zones from subnets
+  subnet_azs = [for subnet in data.aws_subnet.private : subnet.availability_zone]
+
+  # Check if subnets are in different AZs
+  unique_azs = distinct(local.subnet_azs)
+
+  # Check if any route table has an IGW route (0.0.0.0/0 -> igw-*)
+  # Private subnets should NOT have direct IGW routes
+  subnets_with_igw = [
+    for rt_id, rt in data.aws_route_table.private : rt_id
+    if length([
+      for route in rt.routes : route
+      if route.cidr_block == "0.0.0.0/0" && can(regex("^igw-", route.gateway_id))
+    ]) > 0
+  ]
+}
+
 ################################################################################
 # Task Execution - IAM Role
 # https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html
@@ -32,7 +66,7 @@ data "aws_iam_policy_document" "task_exec_secrets" {
     ]
 
     resources = [
-      var.image_registry_credentials_arn
+      var.rm_agent_image_registry_credentials_arn
     ]
   }
 }
@@ -42,6 +76,7 @@ resource "aws_iam_role" "task_exec" {
   name               = "${substr(var.project_name, 0, 49)}-task-exec-role"
   path               = "/"
   assume_role_policy = data.aws_iam_policy_document.task_exec_assume[0].json
+  tags               = local.tags
 }
 
 resource "aws_iam_role_policy" "task_exec" {
@@ -74,7 +109,7 @@ data "aws_iam_policy_document" "tasks_assume" {
 
 data "aws_iam_policy_document" "tasks" {
   dynamic "statement" {
-    for_each = var.rm_storage_manager.bucket != null ? [1] : []
+    for_each = try(var.rm_storage_manager.bucket, null) != null ? [1] : []
     content {
       sid = "S3PutObject"
 
@@ -123,6 +158,7 @@ resource "aws_iam_role" "tasks" {
   name               = "${substr(var.project_name, 0, 53)}-tasks-role"
   path               = "/"
   assume_role_policy = data.aws_iam_policy_document.tasks_assume.json
+  tags               = local.tags
 }
 
 resource "aws_iam_role_policy" "tasks" {
@@ -169,6 +205,8 @@ resource "aws_cloudwatch_log_group" "logs" {
   count             = var.enable_cloudwatch_logging ? 1 : 0
   name              = coalesce(var.cloudwatch_log_group_name, "/aws/ecs/${var.project_name}")
   retention_in_days = var.cloudwatch_log_retention_in_days
+  kms_key_id        = var.cloudwatch_log_group_kms_key_id
+  tags              = local.tags
 }
 
 ################################################################################
@@ -178,6 +216,7 @@ resource "aws_cloudwatch_log_group" "logs" {
 resource "aws_ecs_cluster" "rm_agent" {
   count = var.cluster_arn == null ? 1 : 0
   name  = "${var.project_name}-cluster"
+  tags  = local.tags
 }
 
 ################################################################################
@@ -192,6 +231,7 @@ resource "aws_ecs_task_definition" "rm_agent" {
   memory                   = var.agent_container_memory
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
+  tags                     = local.tags
 
   container_definitions = jsonencode([
     {
@@ -238,7 +278,7 @@ resource "aws_ecs_task_definition" "rm_agent" {
       cpu   = 0
       image = var.agent_container_image
       repositoryCredentials = {
-        credentialsParameter = var.image_registry_credentials_arn
+        credentialsParameter = var.rm_agent_image_registry_credentials_arn
       }
       healthCheck = {
         "retries" = 3
@@ -248,7 +288,7 @@ resource "aws_ecs_task_definition" "rm_agent" {
         ],
         "timeout"     = 5
         "interval"    = 30
-        "startPeriod" = 120
+        "startPeriod" = 30
       },
       essential    = true
       skip_destroy = true
@@ -260,18 +300,142 @@ resource "aws_ecs_task_definition" "rm_agent" {
 # Service
 ################################################################################
 
+data "aws_prefix_list" "s3" {
+  count = var.enable_s3_prefix_list_egress ? 1 : 0
+
+  filter {
+    name   = "prefix-list-name"
+    values = ["com.amazonaws.${data.aws_region.current.region}.s3"]
+  }
+}
+
 resource "aws_security_group" "service" {
   name        = "${var.project_name}-service-sg"
   vpc_id      = var.vpc_id
   description = "Security group attached to the ${var.project_name} service."
+  tags        = local.tags
 }
 
-resource "aws_vpc_security_group_egress_rule" "service_to_anywhere" {
+# HTTPS to DataGrail API (cross-account VPC)
+resource "aws_vpc_security_group_egress_rule" "service_to_datagrail_api" {
   security_group_id = aws_security_group.service.id
 
-  description = "Allow rm-agent service egress to anywhere."
+  description = "HTTPS to DataGrail API"
+  cidr_ipv4   = var.datagrail_api_cidr
+  from_port   = 443
+  to_port     = 443
+  ip_protocol = "tcp"
+}
+
+# HTTPS to S3 (using AWS managed prefix list)
+resource "aws_vpc_security_group_egress_rule" "service_to_s3" {
+  count = var.enable_s3_prefix_list_egress && try(var.rm_storage_manager.bucket, null) != null ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description    = "HTTPS to S3 for storage manager"
+  prefix_list_id = data.aws_prefix_list.s3[0].id
+  from_port      = 443
+  to_port        = 443
+  ip_protocol    = "tcp"
+}
+
+# HTTPS to Secrets Manager VPC Endpoint
+resource "aws_vpc_security_group_egress_rule" "service_to_secrets_manager_vpce" {
+  count = var.secrets_manager_vpc_endpoint_sg_id != null && var.rm_credentials_manager.provider == "AWSSecretsManager" ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description                  = "HTTPS to Secrets Manager VPC Endpoint"
+  referenced_security_group_id = var.secrets_manager_vpc_endpoint_sg_id
+  from_port                    = 443
+  to_port                      = 443
+  ip_protocol                  = "tcp"
+}
+
+# HTTPS to SSM (Parameter Store) VPC Endpoint
+resource "aws_vpc_security_group_egress_rule" "service_to_ssm_vpce" {
+  count = var.ssm_vpc_endpoint_sg_id != null && var.rm_credentials_manager.provider == "AWSParameterStore" ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description                  = "HTTPS to SSM (Parameter Store) VPC Endpoint"
+  referenced_security_group_id = var.ssm_vpc_endpoint_sg_id
+  from_port                    = 443
+  to_port                      = 443
+  ip_protocol                  = "tcp"
+}
+
+# HTTPS to ECR API VPC Endpoint
+resource "aws_vpc_security_group_egress_rule" "service_to_ecr_api_vpce" {
+  count = var.ecr_api_vpc_endpoint_sg_id != null ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description                  = "HTTPS to ECR API VPC Endpoint"
+  referenced_security_group_id = var.ecr_api_vpc_endpoint_sg_id
+  from_port                    = 443
+  to_port                      = 443
+  ip_protocol                  = "tcp"
+}
+
+# HTTPS to ECR DKR (Docker registry) VPC Endpoint
+resource "aws_vpc_security_group_egress_rule" "service_to_ecr_dkr_vpce" {
+  count = var.ecr_dkr_vpc_endpoint_sg_id != null ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description                  = "HTTPS to ECR DKR VPC Endpoint"
+  referenced_security_group_id = var.ecr_dkr_vpc_endpoint_sg_id
+  from_port                    = 443
+  to_port                      = 443
+  ip_protocol                  = "tcp"
+}
+
+# HTTPS for AWS services (fallback when VPC endpoints not provided)
+# Only created if no VPC endpoint security groups are specified
+resource "aws_vpc_security_group_egress_rule" "service_to_aws_services" {
+  count = (
+    var.secrets_manager_vpc_endpoint_sg_id == null ||
+    var.ssm_vpc_endpoint_sg_id == null ||
+    var.ecr_api_vpc_endpoint_sg_id == null ||
+    var.ecr_dkr_vpc_endpoint_sg_id == null
+  ) ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description = "HTTPS to AWS services (Secrets Manager, Parameter Store, ECR) - fallback when VPC endpoints not configured"
   cidr_ipv4   = "0.0.0.0/0"
-  ip_protocol = "-1"
+  from_port   = 443
+  to_port     = 443
+  ip_protocol = "tcp"
+}
+
+# Redis (if configured)
+# Allows Redis on standard port - restrict with security group rules on Redis side
+resource "aws_vpc_security_group_egress_rule" "service_to_redis" {
+  count = var.rm_redis_url != null ? 1 : 0
+
+  security_group_id = aws_security_group.service.id
+
+  description = "Redis connection for rm-agent"
+  cidr_ipv4   = "0.0.0.0/0"
+  from_port   = 6379
+  to_port     = 6379
+  ip_protocol = "tcp"
+}
+
+# Additional egress rules for custom requirements
+resource "aws_vpc_security_group_egress_rule" "service_additional" {
+  for_each = toset(var.additional_egress_cidrs)
+
+  security_group_id = aws_security_group.service.id
+
+  description = "HTTPS to additional CIDR ${each.value}"
+  cidr_ipv4   = each.value
+  from_port   = 443
+  to_port     = 443
+  ip_protocol = "tcp"
 }
 
 resource "aws_ecs_service" "service" {
@@ -279,11 +443,145 @@ resource "aws_ecs_service" "service" {
   cluster         = try(aws_ecs_cluster.rm_agent[0].arn, var.cluster_arn)
   task_definition = aws_ecs_task_definition.rm_agent.arn
   launch_type     = "FARGATE"
-  desired_count   = 1
+  desired_count   = var.desired_count
+
+  deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
+  deployment_maximum_percent         = var.deployment_maximum_percent
+  enable_ecs_managed_tags            = var.enable_ecs_managed_tags
+  propagate_tags                     = var.propagate_tags
+  tags                               = local.tags
+
+  deployment_circuit_breaker {
+    enable   = var.enable_deployment_circuit_breaker
+    rollback = var.enable_deployment_circuit_breaker
+  }
 
   network_configuration {
     subnets          = var.private_subnet_ids
     assign_public_ip = false
     security_groups  = [aws_security_group.service.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(local.unique_azs) >= 2
+      error_message = "Subnets must be in at least 2 different availability zones for high availability. Found ${length(local.unique_azs)} unique AZ(s): ${join(", ", local.unique_azs)}"
+    }
+
+    precondition {
+      condition     = length(local.subnets_with_igw) == 0
+      error_message = "All subnets must be private (no direct Internet Gateway routes). Found ${length(local.subnets_with_igw)} subnet(s) with IGW routes: ${join(", ", local.subnets_with_igw)}. Use subnets with NAT Gateway or VPC endpoints instead."
+    }
+  }
+}
+
+################################################################################
+# CloudWatch Alarms
+################################################################################
+
+resource "aws_cloudwatch_metric_alarm" "cpu_utilization" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  alarm_name          = "${var.project_name}-cpu-utilization"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = var.alarm_evaluation_periods
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.alarm_cpu_threshold
+  alarm_description   = "Triggers when CPU utilization exceeds ${var.alarm_cpu_threshold}% for ${var.alarm_evaluation_periods} consecutive periods"
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  treat_missing_data  = "notBreaching"
+  tags                = local.tags
+
+  dimensions = {
+    ClusterName = try(aws_ecs_cluster.rm_agent[0].name, split("/", var.cluster_arn)[1])
+    ServiceName = aws_ecs_service.service.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "memory_utilization" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  alarm_name          = "${var.project_name}-memory-utilization"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = var.alarm_evaluation_periods
+  metric_name         = "MemoryUtilization"
+  namespace           = "AWS/ECS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.alarm_memory_threshold
+  alarm_description   = "Triggers when memory utilization exceeds ${var.alarm_memory_threshold}% for ${var.alarm_evaluation_periods} consecutive periods"
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  treat_missing_data  = "notBreaching"
+  tags                = local.tags
+
+  dimensions = {
+    ClusterName = try(aws_ecs_cluster.rm_agent[0].name, split("/", var.cluster_arn)[1])
+    ServiceName = aws_ecs_service.service.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "running_task_count" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  alarm_name          = "${var.project_name}-running-task-count"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = var.alarm_evaluation_periods
+  metric_name         = "RunningTaskCount"
+  namespace           = "ECS/ContainerInsights"
+  period              = 60
+  statistic           = "Average"
+  threshold           = var.desired_count
+  alarm_description   = "Triggers when running task count is less than desired count (${var.desired_count})"
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  treat_missing_data  = "breaching"
+  tags                = local.tags
+
+  dimensions = {
+    ClusterName = try(aws_ecs_cluster.rm_agent[0].name, split("/", var.cluster_arn)[1])
+    ServiceName = aws_ecs_service.service.name
+  }
+}
+
+################################################################################
+# EventBridge Rule for Task State Changes
+################################################################################
+
+resource "aws_cloudwatch_event_rule" "task_stopped" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  name        = "${var.project_name}-task-stopped"
+  description = "Captures ECS task stopped/failed events for ${var.project_name}"
+  tags        = local.tags
+
+  event_pattern = jsonencode({
+    source      = ["aws.ecs"]
+    detail-type = ["ECS Task State Change"]
+    detail = {
+      clusterArn    = [try(aws_ecs_cluster.rm_agent[0].arn, var.cluster_arn)]
+      lastStatus    = ["STOPPED"]
+      desiredStatus = ["STOPPED"]
+      stoppedReason = [{ "exists" : true }]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "task_stopped_sns" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.task_stopped[0].name
+  target_id = "SendToSNS"
+  arn       = var.alarm_sns_topic_arn
+
+  input_transformer {
+    input_paths = {
+      taskArn       = "$.detail.taskArn"
+      stoppedReason = "$.detail.stoppedReason"
+      stoppedAt     = "$.detail.stoppedAt"
+      clusterArn    = "$.detail.clusterArn"
+    }
+    input_template = "\"ECS Task Stopped: <taskArn> in cluster <clusterArn>. Reason: <stoppedReason>. Stopped at: <stoppedAt>\""
   }
 }

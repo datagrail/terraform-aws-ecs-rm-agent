@@ -3,30 +3,213 @@ provider "aws" {
   profile = "datagrail-terraform-dev"
 }
 
-module "rm-agent" {
+################################################################################
+# Complete Example - All Configuration Options
+################################################################################
+
+module "rm_agent" {
   source = "../.."
 
-  # VPC
+  # Project Configuration
+  project_name = "rm-agent-prod"
+
+  ################################################################################
+  # VPC and Network Configuration
+  ################################################################################
+
   vpc_id             = "vpc-XXXX"
-  private_subnet_ids = ["subnet-XXXX", "subnet-XXXX"]
+  private_subnet_ids = ["subnet-XXXX", "subnet-YYYY"]
 
+  # DataGrail API egress configuration
+  datagrail_api_cidr = "172.31.0.0/16"
 
-  # Environment Variables
-  rm_customer_domain               = "example.datagrail.io"
-  rm_storage_manager               = "datagrail-bucket"
-  rm_credentials_manager           = ""
-  rm_platform_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.callback"
+  # Additional HTTPS egress destinations (optional)
+  additional_egress_cidrs = [
+    # "10.0.0.0/8",  # Example: internal services
+  ]
 
-  # ECS Task Definition and Service
-  image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.image-registry"
-  agent_container_image          = "contairium.datagrail.io/rm-agent:v0.14.0"
-  agent_container_cpu            = 1024
-  agent_container_memory         = 2048
+  # S3 egress via AWS managed prefix list
+  enable_s3_prefix_list_egress = true # Set to false if using S3 VPC Gateway Endpoint
 
-  # CloudWatch
+  ################################################################################
+  # VPC Endpoint Security Groups (Optional - for tighter security)
+  ################################################################################
+
+  secrets_manager_vpc_endpoint_sg_id = null # "sg-secretsmanager"
+  ssm_vpc_endpoint_sg_id             = null # "sg-ssm"
+  ecr_api_vpc_endpoint_sg_id         = null # "sg-ecr-api"
+  ecr_dkr_vpc_endpoint_sg_id         = null # "sg-ecr-dkr"
+
+  ################################################################################
+  # DataGrail Environment Configuration
+  ################################################################################
+
+  rm_customer_domain = "example.datagrail.io"
+
+  # Storage configuration
+  rm_storage_manager = {
+    provider = "AWSS3"
+    bucket   = "datagrail-rm-agent-results"
+  }
+
+  # Credentials manager
+  rm_credentials_manager = {
+    provider = "AWSSecretsManager" # or "AWSParameterStore"
+  }
+
+  # Platform credentials location
+  rm_platform_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/platform-credentials"
+
+  # Optional: Redis for job queue
+  rm_redis_url = null # "redis://redis.example.com:6379"
+
+  # Optional: Job timeout in seconds
+  rm_job_timeout = 3600
+
+  # Log level
+  loglevel = "INFO" # INFO, DEBUG, WARNING
+
+  ################################################################################
+  # ECS Cluster Configuration
+  ################################################################################
+
+  # Optional: Use existing cluster
+  cluster_arn = null # "arn:aws:ecs:us-west-2:XXXX:cluster/my-cluster"
+
+  ################################################################################
+  # ECS Task Configuration
+  ################################################################################
+
+  # Container image
+  agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
+  rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/image-registry-credentials"
+
+  # CPU and Memory (must be valid Fargate combinations)
+  agent_container_cpu    = 1024
+  agent_container_memory = 2048
+
+  ################################################################################
+  # ECS Service Configuration
+  ################################################################################
+
+  # High availability - run multiple tasks
+  desired_count = 2
+
+  # Deployment configuration
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+  enable_deployment_circuit_breaker  = true
+  enable_ecs_managed_tags            = true
+  propagate_tags                     = "SERVICE" # TASK_DEFINITION, SERVICE, or NONE
+
+  ################################################################################
+  # IAM Configuration
+  ################################################################################
+
+  # Optional: Use existing task execution role
+  task_exec_iam_role_name = null
+
+  # Optional: Additional IAM policies for task role
+  tasks_iam_role_policies = [
+    # "arn:aws:iam::aws:policy/CustomPolicy"
+  ]
+
+  ################################################################################
+  # CloudWatch Logging
+  ################################################################################
+
   enable_cloudwatch_logging        = true
-  cloudwatch_log_group_name        = "/aws/ecs/rm-agent"
-  cloudwatch_log_retention_in_days = 30
-  loglevel                         = "DEBUG"
+  cloudwatch_log_group_name        = "/aws/ecs/rm-agent-prod"
+  cloudwatch_log_retention_in_days = 90
 
+  # Log encryption with KMS
+  cloudwatch_log_group_kms_key_id = null # "arn:aws:kms:us-west-2:XXXX:key/abc-123"
+
+  # Optional: Custom log configuration
+  log_configuration = {
+    # logDriver = "awslogs"  # Uncomment to override
+    # options = {
+    #   "awslogs-create-group" = "true"
+    # }
+  }
+
+  ################################################################################
+  # CloudWatch Alarms (Optional but Recommended for Production)
+  ################################################################################
+
+  # Enable alarms by providing an SNS topic
+  alarm_sns_topic_arn = null # "arn:aws:sns:us-west-2:XXXX:ops-alerts"
+
+  # Alarm thresholds
+  alarm_cpu_threshold      = 80
+  alarm_memory_threshold   = 80
+  alarm_evaluation_periods = 2
+
+  ################################################################################
+  # Resource Tagging
+  ################################################################################
+
+  tags = {
+    Environment = "production"
+    Team        = "platform"
+    CostCenter  = "engineering"
+    Project     = "data-privacy"
+    ManagedBy   = "Terraform"
+    Application = "datagrail-rm-agent"
+    Compliance  = "SOC2"
+  }
+}
+
+################################################################################
+# Outputs
+################################################################################
+
+output "cluster_arn" {
+  description = "ECS cluster ARN"
+  value       = module.rm_agent.cluster_arn
+}
+
+output "service_name" {
+  description = "ECS service name"
+  value       = module.rm_agent.service_name
+}
+
+output "service_arn" {
+  description = "ECS service ARN"
+  value       = module.rm_agent.service_arn
+}
+
+output "security_group_id" {
+  description = "Security group ID"
+  value       = module.rm_agent.security_group_id
+}
+
+output "task_role_arn" {
+  description = "Task IAM role ARN"
+  value       = module.rm_agent.task_role_arn
+}
+
+output "task_execution_role_arn" {
+  description = "Task execution IAM role ARN"
+  value       = module.rm_agent.task_execution_role_arn
+}
+
+output "cloudwatch_log_group_name" {
+  description = "CloudWatch log group name"
+  value       = module.rm_agent.cloudwatch_log_group_name
+}
+
+output "egress_configuration" {
+  description = "Network egress configuration"
+  value       = module.rm_agent.egress_configuration
+}
+
+output "subnet_availability_zones" {
+  description = "Availability zones of configured subnets"
+  value       = module.rm_agent.subnet_availability_zones
+}
+
+output "cloudwatch_alarms_enabled" {
+  description = "Whether CloudWatch alarms are enabled"
+  value       = module.rm_agent.cloudwatch_alarms_enabled
 }
