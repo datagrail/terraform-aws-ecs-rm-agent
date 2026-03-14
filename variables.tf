@@ -39,12 +39,6 @@ variable "rm_credentials_manager" {
   }
 }
 
-variable "rm_redis_url" {
-  description = "Connection string for a remote Redis instance."
-  type        = string
-  default     = null
-}
-
 variable "rm_job_timeout" {
   description = "Max time (seconds) for a single job before timeout"
   type        = number
@@ -79,85 +73,9 @@ variable "private_subnet_ids" {
   }
 }
 
-variable "datagrail_api_cidr" {
-  description = "CIDR block for DataGrail API VPC (cross-account). Defaults to 172.31.0.0/16."
-  type        = string
-  default     = "172.31.0.0/16"
-}
-
-variable "additional_egress_cidrs" {
-  description = "Additional CIDR blocks to allow HTTPS egress to (e.g., for VPC endpoints or other APIs)."
-  type        = list(string)
-  default     = []
-}
-
-variable "enable_s3_prefix_list_egress" {
-  description = "Enable egress to S3 using AWS managed prefix list. Set to false if using S3 VPC Gateway Endpoint."
-  type        = bool
-  default     = true
-}
-
-################################################################################
-# VPC Endpoint Security Groups (Optional)
-################################################################################
-
-variable "secrets_manager_vpc_endpoint_sg_id" {
-  description = "Security group ID of the Secrets Manager VPC endpoint. If provided, creates egress rule to this SG instead of 0.0.0.0/0:443."
-  type        = string
-  default     = null
-}
-
-variable "ssm_vpc_endpoint_sg_id" {
-  description = "Security group ID of the SSM (Parameter Store) VPC endpoint. If provided, creates egress rule to this SG instead of 0.0.0.0/0:443."
-  type        = string
-  default     = null
-}
-
-variable "ecr_api_vpc_endpoint_sg_id" {
-  description = "Security group ID of the ECR API VPC endpoint. If provided, creates egress rule to this SG instead of 0.0.0.0/0:443."
-  type        = string
-  default     = null
-}
-
-variable "ecr_dkr_vpc_endpoint_sg_id" {
-  description = "Security group ID of the ECR DKR (Docker registry) VPC endpoint. If provided, creates egress rule to this SG instead of 0.0.0.0/0:443."
-  type        = string
-  default     = null
-}
-
 ################################################################################
 # ECS Service Deployment Configuration
 ################################################################################
-
-variable "desired_count" {
-  description = "Number of task instances to run. For high availability, set to 2 or more."
-  type        = number
-  default     = 1
-  validation {
-    condition     = var.desired_count >= 0
-    error_message = "desired_count must be a non-negative integer."
-  }
-}
-
-variable "deployment_minimum_healthy_percent" {
-  description = "Lower limit on the number of tasks that must remain running during a deployment, as a percentage of desired_count."
-  type        = number
-  default     = 100
-  validation {
-    condition     = var.deployment_minimum_healthy_percent >= 0 && var.deployment_minimum_healthy_percent <= 100
-    error_message = "deployment_minimum_healthy_percent must be between 0 and 100."
-  }
-}
-
-variable "deployment_maximum_percent" {
-  description = "Upper limit on the number of tasks that can run during a deployment, as a percentage of desired_count."
-  type        = number
-  default     = 200
-  validation {
-    condition     = var.deployment_maximum_percent >= 100
-    error_message = "deployment_maximum_percent must be at least 100."
-  }
-}
 
 variable "enable_deployment_circuit_breaker" {
   description = "Enable deployment circuit breaker to automatically roll back failed deployments."
@@ -359,4 +277,10 @@ variable "agent_container_memory" {
 variable "rm_agent_image_registry_credentials_arn" {
   description = "The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README."
   type        = string
+}
+
+variable "integration_credentials_arns" {
+  description = "The ARNs of the credentials for the RM Agent integrations."
+  type        = list(string)
+  default     = []
 }

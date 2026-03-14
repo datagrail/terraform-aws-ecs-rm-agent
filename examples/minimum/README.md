@@ -4,84 +4,89 @@ This example demonstrates the **minimum required configuration** to deploy the D
 
 ## What's Included
 
-This example only sets the **required variables** with no defaults:
+This example only sets the **required variables**:
 
-- ✅ VPC and subnet configuration
-- ✅ DataGrail customer domain and credentials location
-- ✅ Container image and registry credentials
-
-All other variables use their default values.
+- ✅ VPC and private subnet configuration
+- ✅ DataGrail customer domain and platform credentials location
+- ✅ Container image URI and registry credentials
 
 ## What's NOT Included (Uses Defaults)
 
+The following optional features use their default values:
+
 - **S3 Storage**: `rm_storage_manager = null` (no S3 bucket configured)
-- **Redis**: `rm_redis_url = null` (no external Redis)
+- **Integration Credentials**: `integration_credentials_arns = []` (no additional secrets)
 - **Monitoring**: No CloudWatch alarms (no SNS topic specified)
 - **Log Encryption**: CloudWatch logs are unencrypted
-- **High Availability**: `desired_count = 1` (single task instance)
-- **VPC Endpoints**: No VPC endpoint security groups configured
+- **Additional IAM Policies**: `tasks_iam_role_policies = []` (no custom policies)
+- **Custom Log Configuration**: Uses default CloudWatch logging
+- **ECS Cluster**: Module creates a new cluster
 
 ## Prerequisites
 
 Before deploying this example, you need:
 
-1. **VPC with private subnets**
-   - At least 2 private subnets in different availability zones
-   - NAT Gateway or VPC endpoints for AWS services (S3, Secrets Manager, ECR)
+1. **VPC with private subnets** in at least 2 different availability zones
+2. **NAT Gateway or VPC endpoints** for AWS service access (ECR, Secrets Manager, CloudWatch)
+3. **Secrets in AWS Secrets Manager**:
+   - DataGrail platform credentials
+   - DataGrail image registry credentials
 
-2. **Secrets in AWS Secrets Manager**
-   - DataGrail platform credentials secret
-   - DataGrail image registry credentials secret
-
-3. **Network Access**
-   - Egress to DataGrail API CIDR: `172.31.0.0/16:443`
-   - Egress to AWS services (ECR, Secrets Manager, CloudWatch Logs)
+For detailed prerequisites, see the main [README](../../README.md#prerequisites).
 
 ## Usage
 
-1. Update the variable values in `main.tf`:
-   ```hcl
-   vpc_id             = "vpc-YOUR-VPC-ID"
-   private_subnet_ids = ["subnet-XXXXXX", "subnet-YYYYYY"]
-   rm_customer_domain = "your-company.datagrail.io"
-   # ... update other ARNs
+1. **Create a new directory for your RM Agent configuration:**
+   ```bash
+   mkdir rm-agent && cd rm-agent
    ```
 
-2. Initialize and apply:
+2. **Create a `main.tf` with the minimum required configuration:**
+   ```hcl
+   module "datagrail_rm_agent" {
+     source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git"
+
+     # Or use a specific version:
+     # source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git?ref=v1.0.0"
+
+     # VPC Configuration
+     vpc_id             = "vpc-xxxxx"
+     private_subnet_ids = ["subnet-xxxxx", "subnet-yyyyy"]
+
+     # DataGrail Configuration
+     rm_customer_domain               = "example.datagrail.io"
+     rm_platform_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-platform-key"
+
+     # Container Configuration
+     agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
+     rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
+   }
+   ```
+
+3. **Review the [example configuration](./main.tf)** in this directory for a complete reference.
+
+4. **Deploy:**
    ```bash
-   cd examples/minimum
    terraform init
    terraform plan
    terraform apply
    ```
 
-<!-- BEGIN_TF_DOCS -->
-## Requirements
+## Next Steps
 
-| Name | Version |
-|------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.0 |
+After deploying the minimum example:
 
-## Providers
+1. **Verify deployment** - See [Monitoring and Validation](../../README.md#monitoring-and-validation)
+2. **Add monitoring** - Configure CloudWatch alarms with an SNS topic
+3. **Enable S3 storage** - Add `rm_storage_manager` configuration
+4. **Add integration credentials** - Use `integration_credentials_arns` for database access
+5. **Review the [Complete Example](../complete/)** for additional features
 
-No providers.
+## Additional Documentation
 
-## Modules
+For detailed information, see the main [README](../../README.md):
 
-| Name | Source | Version |
-|------|--------|---------|
-| <a name="module_rm_agent"></a> [rm\_agent](#module\_rm\_agent) | ../.. | n/a |
-
-## Resources
-
-No resources.
-
-## Inputs
-
-No inputs.
-
-## Outputs
-
-No outputs.
-<!-- END_TF_DOCS -->
+- [Architecture](../../README.md#architecture)
+- [AWS Infrastructure Requirements](../../README.md#aws-infrastructure-requirements)
+- [Cost Considerations](../../README.md#cost-considerations)
+- [Troubleshooting](../../README.md#troubleshooting)

@@ -1,6 +1,6 @@
 provider "aws" {
-  region  = "us-west-2"
-  profile = "datagrail-terraform-dev"
+  region = "us-west-2"
+  # profile = "your-aws-profile" # Uncomment and set your AWS profile if needed
 }
 
 ################################################################################
@@ -19,26 +19,6 @@ module "rm_agent" {
 
   vpc_id             = "vpc-XXXX"
   private_subnet_ids = ["subnet-XXXX", "subnet-YYYY"]
-
-  # DataGrail API egress configuration
-  datagrail_api_cidr = "172.31.0.0/16"
-
-  # Additional HTTPS egress destinations (optional)
-  additional_egress_cidrs = [
-    # "10.0.0.0/8",  # Example: internal services
-  ]
-
-  # S3 egress via AWS managed prefix list
-  enable_s3_prefix_list_egress = true # Set to false if using S3 VPC Gateway Endpoint
-
-  ################################################################################
-  # VPC Endpoint Security Groups (Optional - for tighter security)
-  ################################################################################
-
-  secrets_manager_vpc_endpoint_sg_id = null # "sg-secretsmanager"
-  ssm_vpc_endpoint_sg_id             = null # "sg-ssm"
-  ecr_api_vpc_endpoint_sg_id         = null # "sg-ecr-api"
-  ecr_dkr_vpc_endpoint_sg_id         = null # "sg-ecr-dkr"
 
   ################################################################################
   # DataGrail Environment Configuration
@@ -60,8 +40,11 @@ module "rm_agent" {
   # Platform credentials location
   rm_platform_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/platform-credentials"
 
-  # Optional: Redis for job queue
-  rm_redis_url = null # "redis://redis.example.com:6379"
+  # Optional: Integration credentials (database connections, external APIs)
+  integration_credentials_arns = [
+    # "arn:aws:secretsmanager:us-west-2:XXXX:secret:mysql-db-credentials",
+    # "arn:aws:ssm:us-west-2:XXXX:parameter/postgres/connection",
+  ]
 
   # Optional: Job timeout in seconds
   rm_job_timeout = 3600
@@ -92,15 +75,10 @@ module "rm_agent" {
   # ECS Service Configuration
   ################################################################################
 
-  # High availability - run multiple tasks
-  desired_count = 2
-
   # Deployment configuration
-  deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent         = 200
-  enable_deployment_circuit_breaker  = true
-  enable_ecs_managed_tags            = true
-  propagate_tags                     = "SERVICE" # TASK_DEFINITION, SERVICE, or NONE
+  enable_deployment_circuit_breaker = true
+  enable_ecs_managed_tags           = true
+  propagate_tags                    = "SERVICE" # TASK_DEFINITION, SERVICE, or NONE
 
   ################################################################################
   # IAM Configuration
@@ -197,19 +175,4 @@ output "task_execution_role_arn" {
 output "cloudwatch_log_group_name" {
   description = "CloudWatch log group name"
   value       = module.rm_agent.cloudwatch_log_group_name
-}
-
-output "egress_configuration" {
-  description = "Network egress configuration"
-  value       = module.rm_agent.egress_configuration
-}
-
-output "subnet_availability_zones" {
-  description = "Availability zones of configured subnets"
-  value       = module.rm_agent.subnet_availability_zones
-}
-
-output "cloudwatch_alarms_enabled" {
-  description = "Whether CloudWatch alarms are enabled"
-  value       = module.rm_agent.cloudwatch_alarms_enabled
 }

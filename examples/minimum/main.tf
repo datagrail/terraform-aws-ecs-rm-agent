@@ -18,6 +18,7 @@ module "rm_agent" {
   agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
   rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:158714794554:secret:datagrail.rm-agent.image-registry-uaaPm4"
 
+  integration_credentials_arns = ["arn:aws:secretsmanager:us-west-2:158714794554:secret:datagrail-agent.snowflake-nYocvo"]
   # All other variables use their default values:
   # - project_name: "rm-agent"
   # - rm_credentials_manager: { provider = "AWSSecretsManager" }
@@ -25,8 +26,6 @@ module "rm_agent" {
   # - loglevel: "INFO"
   # - agent_container_cpu: 1024
   # - agent_container_memory: 2048
-  # - desired_count: 1
   # - enable_cloudwatch_logging: true
   # - enable_deployment_circuit_breaker: true
-  # - datagrail_api_cidr: "172.31.0.0/16"
 }

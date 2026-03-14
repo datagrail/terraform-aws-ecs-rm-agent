@@ -152,6 +152,20 @@ data "aws_iam_policy_document" "tasks" {
       )
     }
   }
+
+  dynamic "statement" {
+    for_each = length(var.integration_credentials_arns) > 0 ? [1] : []
+    content {
+      sid = "IntegrationCredentialsAccess"
+
+      actions = [
+        "secretsmanager:GetSecretValue",
+        "ssm:GetParameter"
+      ]
+
+      resources = var.integration_credentials_arns
+    }
+  }
 }
 
 resource "aws_iam_role" "tasks" {
@@ -183,7 +197,7 @@ locals {
     logDriver = "awslogs"
     options = {
       awslogs-region        = data.aws_region.current.id,
-      awslogs-group         = try(aws_cloudwatch_log_group.logs[0].name, var.cloudwatch_log_group_name),
+      awslogs-group         = aws_cloudwatch_log_group.logs[0].name,
       awslogs-stream-prefix = "ecs"
     }
     } : {
@@ -259,11 +273,7 @@ resource "aws_ecs_task_definition" "rm_agent" {
           },
           {
             name  = "RM_STORAGE_MANAGER"
-            value = jsonencode(var.rm_storage_manager)
-          },
-          {
-            name  = "RM_REDIS_URL"
-            value = var.rm_redis_url
+            value = var.rm_storage_manager != null ? jsonencode(var.rm_storage_manager) : null
           },
           {
             name  = "RM_JOB_TIMEOUT_SECONDS"
@@ -300,15 +310,6 @@ resource "aws_ecs_task_definition" "rm_agent" {
 # Service
 ################################################################################
 
-data "aws_prefix_list" "s3" {
-  count = var.enable_s3_prefix_list_egress ? 1 : 0
-
-  filter {
-    name   = "prefix-list-name"
-    values = ["com.amazonaws.${data.aws_region.current.region}.s3"]
-  }
-}
-
 resource "aws_security_group" "service" {
   name        = "${var.project_name}-service-sg"
   vpc_id      = var.vpc_id
@@ -316,123 +317,14 @@ resource "aws_security_group" "service" {
   tags        = local.tags
 }
 
-# HTTPS to DataGrail API (cross-account VPC)
-resource "aws_vpc_security_group_egress_rule" "service_to_datagrail_api" {
+# HTTPS egress for DataGrail API and AWS services
+# Domain-based filtering is handled at the application layer via rm_customer_domain
+# VPC endpoints automatically used if configured in the VPC
+resource "aws_vpc_security_group_egress_rule" "service_to_https" {
   security_group_id = aws_security_group.service.id
 
-  description = "HTTPS to DataGrail API"
-  cidr_ipv4   = var.datagrail_api_cidr
-  from_port   = 443
-  to_port     = 443
-  ip_protocol = "tcp"
-}
-
-# HTTPS to S3 (using AWS managed prefix list)
-resource "aws_vpc_security_group_egress_rule" "service_to_s3" {
-  count = var.enable_s3_prefix_list_egress && try(var.rm_storage_manager.bucket, null) != null ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description    = "HTTPS to S3 for storage manager"
-  prefix_list_id = data.aws_prefix_list.s3[0].id
-  from_port      = 443
-  to_port        = 443
-  ip_protocol    = "tcp"
-}
-
-# HTTPS to Secrets Manager VPC Endpoint
-resource "aws_vpc_security_group_egress_rule" "service_to_secrets_manager_vpce" {
-  count = var.secrets_manager_vpc_endpoint_sg_id != null && var.rm_credentials_manager.provider == "AWSSecretsManager" ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description                  = "HTTPS to Secrets Manager VPC Endpoint"
-  referenced_security_group_id = var.secrets_manager_vpc_endpoint_sg_id
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-}
-
-# HTTPS to SSM (Parameter Store) VPC Endpoint
-resource "aws_vpc_security_group_egress_rule" "service_to_ssm_vpce" {
-  count = var.ssm_vpc_endpoint_sg_id != null && var.rm_credentials_manager.provider == "AWSParameterStore" ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description                  = "HTTPS to SSM (Parameter Store) VPC Endpoint"
-  referenced_security_group_id = var.ssm_vpc_endpoint_sg_id
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-}
-
-# HTTPS to ECR API VPC Endpoint
-resource "aws_vpc_security_group_egress_rule" "service_to_ecr_api_vpce" {
-  count = var.ecr_api_vpc_endpoint_sg_id != null ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description                  = "HTTPS to ECR API VPC Endpoint"
-  referenced_security_group_id = var.ecr_api_vpc_endpoint_sg_id
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-}
-
-# HTTPS to ECR DKR (Docker registry) VPC Endpoint
-resource "aws_vpc_security_group_egress_rule" "service_to_ecr_dkr_vpce" {
-  count = var.ecr_dkr_vpc_endpoint_sg_id != null ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description                  = "HTTPS to ECR DKR VPC Endpoint"
-  referenced_security_group_id = var.ecr_dkr_vpc_endpoint_sg_id
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-}
-
-# HTTPS for AWS services (fallback when VPC endpoints not provided)
-# Only created if no VPC endpoint security groups are specified
-resource "aws_vpc_security_group_egress_rule" "service_to_aws_services" {
-  count = (
-    var.secrets_manager_vpc_endpoint_sg_id == null ||
-    var.ssm_vpc_endpoint_sg_id == null ||
-    var.ecr_api_vpc_endpoint_sg_id == null ||
-    var.ecr_dkr_vpc_endpoint_sg_id == null
-  ) ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description = "HTTPS to AWS services (Secrets Manager, Parameter Store, ECR) - fallback when VPC endpoints not configured"
+  description = "HTTPS egress for DataGrail API and AWS services (S3, Secrets Manager, ECR, etc.)"
   cidr_ipv4   = "0.0.0.0/0"
-  from_port   = 443
-  to_port     = 443
-  ip_protocol = "tcp"
-}
-
-# Redis (if configured)
-# Allows Redis on standard port - restrict with security group rules on Redis side
-resource "aws_vpc_security_group_egress_rule" "service_to_redis" {
-  count = var.rm_redis_url != null ? 1 : 0
-
-  security_group_id = aws_security_group.service.id
-
-  description = "Redis connection for rm-agent"
-  cidr_ipv4   = "0.0.0.0/0"
-  from_port   = 6379
-  to_port     = 6379
-  ip_protocol = "tcp"
-}
-
-# Additional egress rules for custom requirements
-resource "aws_vpc_security_group_egress_rule" "service_additional" {
-  for_each = toset(var.additional_egress_cidrs)
-
-  security_group_id = aws_security_group.service.id
-
-  description = "HTTPS to additional CIDR ${each.value}"
-  cidr_ipv4   = each.value
   from_port   = 443
   to_port     = 443
   ip_protocol = "tcp"
@@ -443,10 +335,11 @@ resource "aws_ecs_service" "service" {
   cluster         = try(aws_ecs_cluster.rm_agent[0].arn, var.cluster_arn)
   task_definition = aws_ecs_task_definition.rm_agent.arn
   launch_type     = "FARGATE"
-  desired_count   = var.desired_count
+  desired_count   = 1
 
-  deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
-  deployment_maximum_percent         = var.deployment_maximum_percent
+  # Enforce single-task: max 1 task during deployments (brief downtime)
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
   enable_ecs_managed_tags            = var.enable_ecs_managed_tags
   propagate_tags                     = var.propagate_tags
   tags                               = local.tags
@@ -533,8 +426,8 @@ resource "aws_cloudwatch_metric_alarm" "running_task_count" {
   namespace           = "ECS/ContainerInsights"
   period              = 60
   statistic           = "Average"
-  threshold           = var.desired_count
-  alarm_description   = "Triggers when running task count is less than desired count (${var.desired_count})"
+  threshold           = 1
+  alarm_description   = "Triggers when running task count is less than 1"
   alarm_actions       = [var.alarm_sns_topic_arn]
   treat_missing_data  = "breaching"
   tags                = local.tags

@@ -36,7 +36,7 @@ repos:
           - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
           - --args=--fix
       - id: terraform_docs
-        exclude: ^examples/complete/
+        exclude: ^examples/
         args:
           - --hook-config=--add-to-existing-file=true     # Boolean. true or false
           - --hook-config=--create-file-if-not-exist=true # Boolean. true or false
