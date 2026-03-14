@@ -1,26 +1,27 @@
 # Deploy Request Manager Agent with Terraform
 
 ```
-                          ┌─────────────────────────────────────────────┐
-                          │           Customer Infrastructure           │
-                          │                                             │
-┌──────────┐              │  ┌──────────┐         ┌───────────────────┐ │
-│          │              │  │          │         │                   │ │
-│          │              |  |          ├────────►│   Databases       │ │
-│ DataGrail│              │  │    RM    │  Query  │   • PostgreSQL    │ │
-│ Platform │◄─────────────┼──┤   Agent  │         │   • MySQL         │ │
-│          │   (poll)     │  │          │         │   • SQL Server    │ │
-│          │              │  │          │         │   • MongoDB       │ │
-└──────────┘              │  └──────────┘         └───────────────────┘ │
-                          │        │                                    │
-                          │        │                                    │
-                          │        │              ┌───────────────────┐ │
-                          │        │              │                   │ │
-                          │        └─────────────►│  Internal APIs    │ │
-                          │                       │                   │ │
-                          │                       └───────────────────┘ │
-                          │                                             │
-                          └─────────────────────────────────────────────┘
+                              ┌─────────────────────────────────────────────┐
+                              │           Customer Infrastructure           │
+                              │                                             │
+    ┌──────────┐              │  ┌──────────┐         ┌───────────────────┐ │
+    │          │              │  │          │         │                   │ │
+    │          │              │  │          │         │   Databases       │ │
+    │ DataGrail│              │  │    RM    │         │   • PostgreSQL    │ │
+    │ Platform │◄─────────────┼──┤   Agent  ├────────►│   • MySQL         │ │
+    │          │    (poll)    │  │          │  Query  │   • SQL Server    │ │
+    │          │              │  │          │         │   • MongoDB       │ │
+    │          │              │  │          │         │                   │ │
+    └──────────┘              │  └──────────┘         └───────────────────┘ │
+                              │        │                                    │
+                              │        │                                    │
+                              │        │              ┌───────────────────┐ │
+                              │        │              │                   │ │
+                              │        └─────────────►│  Internal APIs    │ │
+                              │                       │                   │ │
+                              │                       └───────────────────┘ │
+                              │                                             │
+                              └─────────────────────────────────────────────┘
 ```
 
 The Request Manager Agent extends Data Subject Request automation to any internal data systems in a simple and efficient manner. The Agent is installed in your network to handle the communication between the DataGrail application and your internal systems via a REST API interface.
