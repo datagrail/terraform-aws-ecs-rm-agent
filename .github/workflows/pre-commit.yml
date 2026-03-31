@@ -89,8 +89,6 @@ jobs:
           head_sha=${{ github.event.pull_request.head.sha }}
           if [ "${{ github.event_name}}" = "merge_group" ]; then
             base_sha="${{ github.event.merge_group.base_sha }}"
-            head_sha="${GITHUB_EVENT_MERGE_GROUP_HEAD_REF}"
+            head_sha="${{ github.event.merge_group.head_ref }}"
           fi
           pre-commit run --show-diff-on-failure --color=always --verbose --from-ref ${base_sha} --to-ref ${head_sha}
-        env:
-          GITHUB_EVENT_MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
