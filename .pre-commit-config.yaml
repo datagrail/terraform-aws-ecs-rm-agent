@@ -1,7 +1,16 @@
 repos:
+  ### Supply Chain Security
+  - repo: local
+    hooks:
+      - id: enforce-sha-pins
+        name: Enforce SHA pinning in pre-commit config
+        entry: '^\s+rev: (?![\x27"]?[A-Fa-f0-9]{40}[\x27"]?(\s+#|$))'
+        language: pygrep
+        files: ^\.pre-commit-config\.yaml$
+        description: "Fails if a 'rev:' value is not a 40-character hex SHA."
   ### General Hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
     hooks:
       - id: check-added-large-files
       - id: no-commit-to-branch
@@ -9,20 +18,20 @@ repos:
 
   ### Github Action Hooks
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.35.0
+    rev: b32b2911704f67f5319d0a7630394cb6b07df851  # 0.35.0
     hooks:
       - id: check-github-workflows
         args: [ "--verbose" ]
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.9
+    rev: a443f344ff32813837fa49f7aa6cbc478d770e62  # v1.7.9
     hooks:
       - id: actionlint
         files: ^\.github/workflows/
 
   ### Terraform Hooks
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.102.0
+    rev: 18cead24f7d3df230683a008aaf903f43e8457d6  # v1.102.0
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
