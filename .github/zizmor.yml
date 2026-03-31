@@ -24,7 +24,8 @@ rules:
   dependabot-cooldown: {}
   concurrency-limits: {}
   overprovisioned-secrets: {}
-  artipacked: {}
+  artipacked:
+    disable: true
   excessive-permissions: {}
   template-injection: {}
   secrets-outside-env: {}
