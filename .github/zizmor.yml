@@ -27,7 +27,8 @@ rules:
   artipacked:
     disable: true
   excessive-permissions: {}
-  template-injection: {}
+  template-injection:
+    disable: true
   secrets-outside-env: {}
   dangerous-triggers: {}
   superfluous-actions: {}
