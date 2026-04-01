@@ -49,3 +49,8 @@ repos:
         args:
           - --hook-config=--add-to-existing-file=true     # Boolean. true or false
           - --hook-config=--create-file-if-not-exist=true # Boolean. true or false
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: ea2eb407b4cbce87cf0d502f36578950494f5ac9  # v1.23.1
+    hooks:
+      - id: zizmor
+        files: ^\.github/(workflows|actions)/
