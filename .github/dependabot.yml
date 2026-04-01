@@ -1,12 +1,10 @@
 version: 2
 updates:
-- package-ecosystem: "github-actions"
-- package-ecosystem: "pre-commit"
+  - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:
       interval: "weekly"
     commit-message:
-prefix: "DAT-15011 (gha) "
-prefix: "DAT-15011 (pre-commit) "
+      prefix: "DAT-15011 (pre-commit) "
     cooldown:
       default-days: 7
