@@ -8,7 +8,7 @@ provider "aws" {
 ################################################################################
 
 module "rm_agent" {
-  source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git?ref=v0.0.1"
+  source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git?ref=v1.0.0"
 
   # Project Configuration
   project_name = "rm-agent-prod"
