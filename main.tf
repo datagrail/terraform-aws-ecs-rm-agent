@@ -1,84 +1,37 @@
 data "aws_region" "current" {}
 
-################################################################################
-# Load Balancer
-################################################################################
+data "aws_subnet" "private" {
+  for_each = toset(var.private_subnet_ids)
+  id       = each.value
+}
+
+data "aws_route_table" "private" {
+  for_each  = toset(var.private_subnet_ids)
+  subnet_id = each.value
+}
 
 locals {
-  container_port          = 8080
-  datagrail_ingress_cidrs = ["52.36.177.91/32"]
-}
-
-resource "aws_security_group" "load_balancer_security_group" {
-  name        = "${var.project_name}-lb-sg"
-  vpc_id      = var.vpc_id
-  description = "Security group attached to the ${var.project_name} load balancer"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "datagrail_to_alb" {
-  for_each = toset(local.datagrail_ingress_cidrs)
-
-  security_group_id = aws_security_group.load_balancer_security_group.id
-
-  description = "Allow load balancer ingress from DataGrail."
-  cidr_ipv4   = each.value
-  ip_protocol = "tcp"
-  to_port     = 443
-  from_port   = 443
-}
-
-resource "aws_vpc_security_group_ingress_rule" "additional_to_alb" {
-  for_each = { for k, v in var.load_balancer_ingress_rules : k => v }
-
-  security_group_id = aws_security_group.load_balancer_security_group.id
-
-  description = try(each.value.description, null)
-  cidr_ipv4   = try(each.value.cidr_ipv4, null)
-  cidr_ipv6   = try(each.value.cidr_ipv6, null)
-  ip_protocol = "tcp"
-  from_port   = 443
-  to_port     = 443
-}
-
-resource "aws_vpc_security_group_egress_rule" "alb_to_service" {
-  security_group_id = aws_security_group.load_balancer_security_group.id
-
-  referenced_security_group_id = aws_security_group.service.id
-  description                  = "Allow load balancer egress to datagrail-rm-agent service"
-  ip_protocol                  = "tcp"
-  from_port                    = local.container_port
-  to_port                      = local.container_port
-}
-
-resource "aws_alb_target_group" "datagrail_agent" {
-  name        = "${var.project_name}-target-group"
-  port        = local.container_port
-  protocol    = "HTTP"
-  target_type = "ip"
-  vpc_id      = var.vpc_id
-  health_check {
-    path = "/"
+  default_tags = {
+    ManagedBy = "Terraform"
+    Module    = "terraform-aws-ecs-rm-agent"
   }
-}
+  tags = merge(local.default_tags, var.tags)
 
-resource "aws_alb" "datagrail_agent" {
-  name               = substr("${var.project_name}-lb", 0, 32)
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.load_balancer_security_group.id]
-  subnets            = var.public_subnet_ids
-}
+  # Extract availability zones from subnets
+  subnet_azs = [for subnet in data.aws_subnet.private : subnet.availability_zone]
 
-resource "aws_lb_listener" "listener" {
-  load_balancer_arn = aws_alb.datagrail_agent.arn
-  port              = "443"
-  protocol          = "HTTPS"
-  ssl_policy        = var.load_balancer_ssl_policy
-  certificate_arn   = var.certificate_arn
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_alb_target_group.datagrail_agent.arn
-  }
+  # Check if subnets are in different AZs
+  unique_azs = distinct(local.subnet_azs)
+
+  # Check if any route table has an IGW route (0.0.0.0/0 -> igw-*)
+  # Private subnets should NOT have direct IGW routes
+  subnets_with_igw = [
+    for rt_id, rt in data.aws_route_table.private : rt_id
+    if length([
+      for route in rt.routes : route
+      if route.cidr_block == "0.0.0.0/0" && can(regex("^igw-", route.gateway_id))
+    ]) > 0
+  ]
 }
 
 ################################################################################
@@ -113,7 +66,7 @@ data "aws_iam_policy_document" "task_exec_secrets" {
     ]
 
     resources = [
-      var.image_registry_credentials_arn
+      var.rm_agent_image_registry_credentials_arn
     ]
   }
 }
@@ -123,6 +76,7 @@ resource "aws_iam_role" "task_exec" {
   name               = "${substr(var.project_name, 0, 49)}-task-exec-role"
   path               = "/"
   assume_role_policy = data.aws_iam_policy_document.task_exec_assume[0].json
+  tags               = local.tags
 }
 
 resource "aws_iam_role_policy" "task_exec" {
@@ -154,20 +108,23 @@ data "aws_iam_policy_document" "tasks_assume" {
 }
 
 data "aws_iam_policy_document" "tasks" {
-  statement {
-    sid = "S3PutObject"
+  dynamic "statement" {
+    for_each = try(var.rm_storage_manager.bucket, null) != null ? [1] : []
+    content {
+      sid = "S3PutObject"
 
-    actions = [
-      "s3:PutObject"
-    ]
+      actions = [
+        "s3:PutObject"
+      ]
 
-    resources = [
-      "arn:aws:s3:::${var.bucket_name}/*"
-    ]
+      resources = [
+        "arn:aws:s3:::${var.rm_storage_manager.bucket}/*"
+      ]
+    }
   }
 
   dynamic "statement" {
-    for_each = var.credentials_manager == "AWSSecretsManager" ? [1] : []
+    for_each = var.rm_credentials_manager.provider == "AWSSecretsManager" ? [1] : []
     content {
       sid = "SecretsManagerGetSecretValue"
 
@@ -176,15 +133,13 @@ data "aws_iam_policy_document" "tasks" {
       ]
 
       resources = concat(
-        [var.datagrail_callback_token_arn,
-        var.datagrail_agent_client_credentials_arn],
-        [for connection in var.connections : connection.credentials_location]
+        [var.rm_platform_credentials_location]
       )
     }
   }
 
   dynamic "statement" {
-    for_each = var.credentials_manager == "AWSParameterStore" ? [1] : []
+    for_each = var.rm_credentials_manager.provider == "AWSParameterStore" ? [1] : []
     content {
       sid = "ParameterStoreGetParameter"
 
@@ -193,10 +148,22 @@ data "aws_iam_policy_document" "tasks" {
       ]
 
       resources = concat(
-        [var.datagrail_callback_token_arn,
-        var.datagrail_agent_client_credentials_arn],
-        [for connection in var.connections : connection.credentials_location]
+        [var.rm_platform_credentials_location]
       )
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(var.integration_credentials_arns) > 0 ? [1] : []
+    content {
+      sid = "IntegrationCredentialsAccess"
+
+      actions = [
+        "secretsmanager:GetSecretValue",
+        "ssm:GetParameter"
+      ]
+
+      resources = var.integration_credentials_arns
     }
   }
 }
@@ -205,6 +172,7 @@ resource "aws_iam_role" "tasks" {
   name               = "${substr(var.project_name, 0, 53)}-tasks-role"
   path               = "/"
   assume_role_policy = data.aws_iam_policy_document.tasks_assume.json
+  tags               = local.tags
 }
 
 resource "aws_iam_role_policy" "tasks" {
@@ -229,7 +197,7 @@ locals {
     logDriver = "awslogs"
     options = {
       awslogs-region        = data.aws_region.current.id,
-      awslogs-group         = try(aws_cloudwatch_log_group.logs[0].name, var.cloudwatch_log_group_name),
+      awslogs-group         = aws_cloudwatch_log_group.logs[0].name,
       awslogs-stream-prefix = "ecs"
     }
     } : {
@@ -251,43 +219,25 @@ resource "aws_cloudwatch_log_group" "logs" {
   count             = var.enable_cloudwatch_logging ? 1 : 0
   name              = coalesce(var.cloudwatch_log_group_name, "/aws/ecs/${var.project_name}")
   retention_in_days = var.cloudwatch_log_retention_in_days
+  kms_key_id        = var.cloudwatch_log_group_kms_key_id
+  tags              = local.tags
 }
 
 ################################################################################
 # Cluster
 ################################################################################
 
-resource "aws_ecs_cluster" "datagrail_agent" {
+resource "aws_ecs_cluster" "rm_agent" {
   count = var.cluster_arn == null ? 1 : 0
   name  = "${var.project_name}-cluster"
+  tags  = local.tags
 }
 
 ################################################################################
 # Task Definition
 ################################################################################
 
-locals {
-  datagrail_agent_config = jsonencode({
-    connections                          = var.connections,
-    customer_domain                      = var.customer_domain
-    datagrail_agent_credentials_location = var.datagrail_agent_client_credentials_arn
-    datagrail_credentials_location       = var.datagrail_callback_token_arn
-    platform = {
-      storage_manager = {
-        provider = "AWSS3",
-        options = {
-          bucket = var.bucket_name
-        }
-      }
-      credentials_manager = {
-        provider = var.credentials_manager
-      }
-    }
-  })
-}
-
-
-resource "aws_ecs_task_definition" "datagrail_agent" {
+resource "aws_ecs_task_definition" "rm_agent" {
   family                   = var.project_name
   execution_role_arn       = try(data.aws_iam_role.task_exec[0].arn, aws_iam_role.task_exec[0].arn)
   task_role_arn            = aws_iam_role.tasks.arn
@@ -295,18 +245,12 @@ resource "aws_ecs_task_definition" "datagrail_agent" {
   memory                   = var.agent_container_memory
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
+  tags                     = local.tags
 
   container_definitions = jsonencode([
     {
       name             = var.project_name
       logConfiguration = local.log_configuration
-      portMappings = [
-        {
-          "hostPort"      = local.container_port
-          "containerPort" = local.container_port
-          "protocol"      = "tcp"
-        }
-      ],
       command = [
         "supervisord",
         "-n",
@@ -314,30 +258,47 @@ resource "aws_ecs_task_definition" "datagrail_agent" {
         "/etc/rm.conf"
       ],
       environment = [
-        {
-          "name"  = "DATAGRAIL_AGENT_CONFIG"
-          "value" = local.datagrail_agent_config
-        },
-        {
-          "name"  = "LOGLEVEL"
-          "value" = upper(var.loglevel)
-        }
+        for env in [
+          {
+            name  = "RM_CUSTOMER_DOMAIN"
+            value = var.rm_customer_domain
+          },
+          {
+            name  = "RM_PLATFORM_CREDENTIALS_LOCATION"
+            value = var.rm_platform_credentials_location
+          },
+          {
+            name  = "RM_CREDENTIALS_MANAGER"
+            value = jsonencode(var.rm_credentials_manager)
+          },
+          {
+            name  = "RM_STORAGE_MANAGER"
+            value = var.rm_storage_manager != null ? jsonencode(var.rm_storage_manager) : null
+          },
+          {
+            name  = "RM_JOB_TIMEOUT_SECONDS"
+            value = var.rm_job_timeout
+          },
+          {
+            name  = "LOGLEVEL"
+            value = upper(var.loglevel)
+          }
+        ] : env if env.value != null
       ]
-      cpu              = 0
-      workingDirectory = "/app"
-      image            = var.agent_container_image
+      cpu   = 0
+      image = var.agent_container_image
       repositoryCredentials = {
-        credentialsParameter = var.image_registry_credentials_arn
+        credentialsParameter = var.rm_agent_image_registry_credentials_arn
       }
       healthCheck = {
         "retries" = 3
         "command" = [
           "CMD-SHELL",
-          "curl -f http://localhost:${local.container_port}/ || exit 1"
+          "test -f /app/healthy || exit 1"
         ],
         "timeout"     = 5
         "interval"    = 30
-        "startPeriod" = 1
+        "startPeriod" = 30
       },
       essential    = true
       skip_destroy = true
@@ -353,37 +314,39 @@ resource "aws_security_group" "service" {
   name        = "${var.project_name}-service-sg"
   vpc_id      = var.vpc_id
   description = "Security group attached to the ${var.project_name} service."
+  tags        = local.tags
 }
 
-resource "aws_vpc_security_group_ingress_rule" "service_from_alb" {
+# HTTPS egress for DataGrail API and AWS services
+# Domain-based filtering is handled at the application layer via rm_customer_domain
+# VPC endpoints automatically used if configured in the VPC
+resource "aws_vpc_security_group_egress_rule" "service_to_https" {
   security_group_id = aws_security_group.service.id
 
-  description                  = "Allow datagrail-rm-agent service ingress from load balancer."
-  referenced_security_group_id = aws_security_group.load_balancer_security_group.id
-  ip_protocol                  = "tcp"
-  from_port                    = local.container_port
-  to_port                      = local.container_port
-}
-
-resource "aws_vpc_security_group_egress_rule" "service_to_anywhere" {
-  security_group_id = aws_security_group.service.id
-
-  description = "Allow datagrail-rm-agent service egress to anywhere."
+  description = "HTTPS egress for DataGrail API and AWS services (S3, Secrets Manager, ECR, etc.)"
   cidr_ipv4   = "0.0.0.0/0"
-  ip_protocol = "-1"
+  from_port   = 443
+  to_port     = 443
+  ip_protocol = "tcp"
 }
 
 resource "aws_ecs_service" "service" {
   name            = "${var.project_name}-service"
-  cluster         = try(aws_ecs_cluster.datagrail_agent[0].arn, var.cluster_arn)
-  task_definition = aws_ecs_task_definition.datagrail_agent.arn
+  cluster         = try(aws_ecs_cluster.rm_agent[0].arn, var.cluster_arn)
+  task_definition = aws_ecs_task_definition.rm_agent.arn
   launch_type     = "FARGATE"
   desired_count   = 1
 
-  load_balancer {
-    target_group_arn = aws_alb_target_group.datagrail_agent.arn
-    container_name   = aws_ecs_task_definition.datagrail_agent.family
-    container_port   = local.container_port
+  # Enforce single-task: max 1 task during deployments (brief downtime)
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  enable_ecs_managed_tags            = var.enable_ecs_managed_tags
+  propagate_tags                     = var.propagate_tags
+  tags                               = local.tags
+
+  deployment_circuit_breaker {
+    enable   = var.enable_deployment_circuit_breaker
+    rollback = var.enable_deployment_circuit_breaker
   }
 
   network_configuration {
@@ -391,27 +354,127 @@ resource "aws_ecs_service" "service" {
     assign_public_ip = false
     security_groups  = [aws_security_group.service.id]
   }
+
+  lifecycle {
+    precondition {
+      condition     = length(local.unique_azs) >= 2
+      error_message = "Subnets must be in at least 2 different availability zones for high availability. Found ${length(local.unique_azs)} unique AZ(s): ${join(", ", local.unique_azs)}"
+    }
+
+    precondition {
+      condition     = length(local.subnets_with_igw) == 0
+      error_message = "All subnets must be private (no direct Internet Gateway routes). Found ${length(local.subnets_with_igw)} subnet(s) with IGW routes: ${join(", ", local.subnets_with_igw)}. Use subnets with NAT Gateway or VPC endpoints instead."
+    }
+  }
 }
 
 ################################################################################
-# Route53 Record
+# CloudWatch Alarms
 ################################################################################
 
-data "aws_route53_zone" "this" {
-  count        = var.hosted_zone_name == null ? 0 : 1
-  name         = var.hosted_zone_name
-  private_zone = false
+resource "aws_cloudwatch_metric_alarm" "cpu_utilization" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  alarm_name          = "${var.project_name}-cpu-utilization"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = var.alarm_evaluation_periods
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.alarm_cpu_threshold
+  alarm_description   = "Triggers when CPU utilization exceeds ${var.alarm_cpu_threshold}% for ${var.alarm_evaluation_periods} consecutive periods"
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  treat_missing_data  = "notBreaching"
+  tags                = local.tags
+
+  dimensions = {
+    ClusterName = try(aws_ecs_cluster.rm_agent[0].name, split("/", var.cluster_arn)[1])
+    ServiceName = aws_ecs_service.service.name
+  }
 }
 
-resource "aws_route53_record" "alb_alias" {
-  count   = var.hosted_zone_name == null ? 0 : 1
-  zone_id = data.aws_route53_zone.this[0].zone_id
-  name    = "${var.agent_subdomain}.${data.aws_route53_zone.this[0].name}"
-  type    = "A"
+resource "aws_cloudwatch_metric_alarm" "memory_utilization" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
 
-  alias {
-    name                   = aws_alb.datagrail_agent.dns_name
-    zone_id                = aws_alb.datagrail_agent.zone_id
-    evaluate_target_health = true
+  alarm_name          = "${var.project_name}-memory-utilization"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = var.alarm_evaluation_periods
+  metric_name         = "MemoryUtilization"
+  namespace           = "AWS/ECS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.alarm_memory_threshold
+  alarm_description   = "Triggers when memory utilization exceeds ${var.alarm_memory_threshold}% for ${var.alarm_evaluation_periods} consecutive periods"
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  treat_missing_data  = "notBreaching"
+  tags                = local.tags
+
+  dimensions = {
+    ClusterName = try(aws_ecs_cluster.rm_agent[0].name, split("/", var.cluster_arn)[1])
+    ServiceName = aws_ecs_service.service.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "running_task_count" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  alarm_name          = "${var.project_name}-running-task-count"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = var.alarm_evaluation_periods
+  metric_name         = "RunningTaskCount"
+  namespace           = "ECS/ContainerInsights"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 1
+  alarm_description   = "Triggers when running task count is less than 1"
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  treat_missing_data  = "breaching"
+  tags                = local.tags
+
+  dimensions = {
+    ClusterName = try(aws_ecs_cluster.rm_agent[0].name, split("/", var.cluster_arn)[1])
+    ServiceName = aws_ecs_service.service.name
+  }
+}
+
+################################################################################
+# EventBridge Rule for Task State Changes
+################################################################################
+
+resource "aws_cloudwatch_event_rule" "task_stopped" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  name        = "${var.project_name}-task-stopped"
+  description = "Captures ECS task stopped/failed events for ${var.project_name}"
+  tags        = local.tags
+
+  event_pattern = jsonencode({
+    source      = ["aws.ecs"]
+    detail-type = ["ECS Task State Change"]
+    detail = {
+      clusterArn    = [try(aws_ecs_cluster.rm_agent[0].arn, var.cluster_arn)]
+      lastStatus    = ["STOPPED"]
+      desiredStatus = ["STOPPED"]
+      stoppedReason = [{ "exists" : true }]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "task_stopped_sns" {
+  count = var.alarm_sns_topic_arn != null ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.task_stopped[0].name
+  target_id = "SendToSNS"
+  arn       = var.alarm_sns_topic_arn
+
+  input_transformer {
+    input_paths = {
+      taskArn       = "$.detail.taskArn"
+      stoppedReason = "$.detail.stoppedReason"
+      stoppedAt     = "$.detail.stoppedAt"
+      clusterArn    = "$.detail.clusterArn"
+    }
+    input_template = "\"ECS Task Stopped: <taskArn> in cluster <clusterArn>. Reason: <stoppedReason>. Stopped at: <stoppedAt>\""
   }
 }

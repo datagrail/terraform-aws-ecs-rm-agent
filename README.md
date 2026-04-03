@@ -1,6 +1,25 @@
 # Deploy Request Manager Agent with Terraform
 
-![Request Manager Agent Diagram](/assets/images/rm-agent-diagram.png)
+```
+                              ┌─────────────────────────────────────────────┐
+                              │         Customer Infrastructure             │
+                              │                                             │
+    ┌──────────┐              │  ┌──────────┐         ┌─────────────────┐   │
+    │          │              │  │          │         │   Datastore     │   │
+    │          │              │  │          │         │  • PostgreSQL   │   │
+    │          │    HTTPS     │  │          ├────────►│  • MySQL        │   │
+    │ DataGrail│    (poll)    │  │    RM    │  TCP    │  • SQL Server   │   │
+    │ Platform │◄─────────────┼──┤  Agent   │         │  • Redshift     │   │
+    │          │              │  │          │         │  • Snowflake    │   │
+    │          │              │  │          │         └─────────────────┘   │
+    │          │              │  │          │                               │
+    │          │              │  │          │         ┌─────────────────┐   │
+    │          │              │  │          ├────────►│  Internal APIs  │   │
+    └──────────┘              │  │          │  HTTPS  └─────────────────┘   │
+                              │  └──────────┘                               │
+                              │                                             │
+                              └─────────────────────────────────────────────┘
+```
 
 The Request Manager Agent extends Data Subject Request automation to any internal data systems in a simple and efficient manner. The Agent is installed in your network to handle the communication between the DataGrail application and your internal systems via a REST API interface.
 
@@ -14,11 +33,11 @@ The Request Manager Agent is distributed as a Docker image, enabling deployment 
 
 Deploying the Agent in your network gives you complete control of the connection to your internal systems.
 
-Network ingress to the Agent is secured with OAuth, TLS, and well-defined traffic rules, while internal system connectivity from the Agent is defined by you. Internal system access provided to the Agent uses the principle of least privilege to only access what’s needed.
+The Agent uses an **egress-only architecture**, meaning it only makes outbound connectoins and never accepts inbound traffic. This eliminates the need for exposed endpints and inbound firewall rules. The Agent polls DataGrail for work over secure, encrypted connections, then connects to your internal systems using credentials you control. Internal system access follows the principle of least privelege by only granting access to only what's needed to fulfill the request.
 
 ## Flexible Connections
 
-Communicate with internal systems (databases, data warehouses, APIs, etc.) using one of the many pre-built [connections](https://docs.datagrail.io/docs/integrations/internal-systems-integrations/request-manager-agent/configuration/connections/setup).
+Communicate with internal systems (databases, data warehouses, APIs, etc.) using one of the many pre-built integrations.
 
 Internal systems change over time and it's easy to update the Agent to encompass new systems to include in DSR processing automation.
 
@@ -39,44 +58,308 @@ Create a secret in Secrets Manager with the following key/value pairs:
 } 
 ```
 
-Once the secret has been created, reference the secret's ARN in the `image_registry_credentials_arn` variable in the configuration. The module will handle specifying the credentials in the Task Definition.
+Once the secret has been created, reference the secret's ARN in the `rm_agent_image_registry_credentials_arn` variable in the configuration. The module will handle specifying the credentials in the Task Definition.
 
 For more information about using non-AWS container images in AWS, see AWS's [documentation](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html).
 
-### Request Manager Agent Client Credentials
 
-DataGrail performs a [Client Credentials flow](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-credentials-flow) to get an authentication token to authenticate its requests. The Client ID and Secret are arbitrary values that you control.
+### DataGrail Platform API Key
 
-Create a secret in Secrets Manager or Parameter Store with the following key/value pair:
+The Request Manager Agent requires an API key to authenticate with the DataGrail platform. This key is generated in the DataGrail UI and securely stored in your credentials manager. Each API key is associated with a specific Agent. If you intend to use multiple Agents, you must generate a unique API key for each one.
 
-```json
-{
-  "client_id": "<an arbitrary client ID, e.g., 'datagrail'>",
-  "client_secret": "<an arbitrary client secret (treat it like a password)>"
-}
-```
-
-Once the secret has been created, reference the secret's ARN in the `datagrail_agent_client_credentials_arn` variable in the configuration. The module will handle specifying the credentials location in the `DATAGRAIL_AGENT_CONFIG` environment variable.
-
-### Callback Token
-
-The Request Manager Agent uses a callback function to notify DataGrail that a request has been fulfilled. Requests require a callback API token to authenticate the request. This token will be provided to you by DataGrail.
-
-Create a secret in Secrets Manager or Parameter Store with the following key/value pair:
+Create a secret in your credentials manager with the following key/value pairs:
 
 ```json
 {
-  "token": "<callback token provided by DataGrail>"
+  "token": "<DataGrail platform API key>"
 }
 ```
 
-Once the secret has been created, reference the secret's ARN in the `datagrail_callback_token_arn` variable in the configuration. The module will handle specifying the credentials location in the `DATAGRAIL_AGENT_CONFIG` environment variable.
+Once the secret has been created, reference the secret's ARN in the `rm_platform_api_credentials_location` variable. The module will grant the task role read access to the secret.
 
-## Integrating the Agent with DataGrail
+### Integration Credentials (Optional)
 
-Once the Agent is running, you can integrate it with the DataGrail platform following [these instructions](https://docs.datagrail.io/docs/integrations/connection-instructions/internal_systems_oauth_based).
+Store databases or APIs credentials in Secrets Manager or Parameter Store and reference them using the `integration_credentials_arns` variable. The module will grant the task role read access to these secrets.
 
-The **Client ID** and **Client Secret** values are generated for you as part of this module. To get these values, retrieve them from the `datagrail.rm-agent-credentials` secret in Secrets Manager, or the `/datagrail/rm-agent-credentials` parameter in Parameter Store.
+```hcl
+integration_credentials_arns = [
+  "arn:aws:secretsmanager:region:account:secret:mysql-db-credentials",
+  "arn:aws:ssm:region:account:parameter/postgres/connection"
+]
+```
+
+## Architecture
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                         VPC (vpc-XXXX)                     │
+│  ┌────────────────┐                    ┌────────────────┐  │
+│  │ Private Subnet │                    │ Private Subnet │  │
+│  │   (AZ-1)       │                    │   (AZ-2)       │  │
+│  │                │                    │                │  │
+│  │  ┌──────────┐  │                    │                │  │
+│  │  │ RM Agent │◄─┼────────────────────┼────────────────┤  │
+│  │  │  Task    │  │  (Failover AZ-2)   │                │  │
+│  │  └────┬─────┘  │                    │                │  │
+│  └───────┼────────┘                    └────────────────┘  │
+│          │                                                 │
+│          │            Security Group                       │
+│          │            Egress: 0.0.0.0/0:443 (HTTPS)        │
+└──────────┼─────────────────────────────────────────────────┘
+           │
+   ┌───────▼────────┐
+   │  External      │
+   │  Resources     │
+   │  • DataGrail   │
+   │  • S3          │
+   │  • Secrets Mgr │
+   │  • Databases   │
+   └────────────────┘
+```
+
+The Agent runs as a single ECS Fargate task in private subnets across multiple availability zones for high availability. If an AZ fails, ECS automatically restarts the task in another AZ.
+
+## AWS Infrastructure Requirements
+
+### VPC Configuration
+
+- **Private Subnets**: At least 2 private subnets in different availability zones
+- **Internet Access**: NAT Gateway or VPC endpoints for AWS service access
+- **No Public IPs**: Tasks do not have public IP addresses assigned
+
+### Network Connectivity
+
+The Agent requires HTTPS (port 443) egress to:
+- DataGrail API endpoint
+- AWS services (ECR, Secrets Manager/Parameter Store, CloudWatch Logs, S3)
+- Integration databases and APIs (as configured)
+
+### VPC Endpoints (Recommended)
+
+Using VPC endpoints reduces NAT Gateway costs and improves security. The following endpoints are recommended:
+
+```hcl
+# S3 - Gateway Endpoint (free)
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id          = var.vpc_id
+  service_name    = "com.amazonaws.${data.aws_region.current.name}.s3"
+  route_table_ids = [aws_route_table.private.id]
+}
+
+# Secrets Manager - Interface Endpoint
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+}
+
+# ECR API - Interface Endpoint
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+}
+
+# ECR DKR - Interface Endpoint
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+}
+
+# CloudWatch Logs - Interface Endpoint
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+}
+```
+
+**Note:** VPC endpoints are automatically used if they exist in your VPC. No additional module configuration is required.
+
+## Usage
+
+### Quick Start
+
+See the [examples](./examples/) directory for complete configurations:
+
+- **[Minimum Example](./examples/minimum/)** - Basic configuration with only required variables
+- **[Complete Example](./examples/complete/)** - Production-ready configuration with all features
+
+### Basic Configuration
+
+```hcl
+module "rm_agent" {
+  source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git"
+
+  # VPC Configuration
+  vpc_id             = "vpc-xxxxx"
+  private_subnet_ids = ["subnet-xxxxx", "subnet-yyyyy"]
+
+  # DataGrail Configuration
+  rm_customer_domain               = "example.datagrail.io"
+  rm_platform_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-platform-key"
+
+  # Container Configuration
+  agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
+  rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
+
+  # Optional: S3 Storage
+  rm_storage_manager = {
+    provider = "AWSS3"
+    bucket   = "my-rm-agent-results"
+  }
+}
+```
+
+**Using a specific version (recommended for production):**
+
+```hcl
+module "datagrail_rm_agent" {
+  source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git?ref=v1.0.0"
+
+  # ... configuration ...
+}
+```
+
+## Cost Considerations
+
+### Estimated Monthly Costs (us-west-2)
+
+| Resource | Configuration | Monthly Cost |
+|----------|--------------|--------------|
+| **Fargate Task** | 1 task × 1024 CPU × 2048 MB × 24/7 | ~$44 |
+| **NAT Gateway** | 1 NAT × data transfer | ~$32 + data |
+| **VPC Endpoints** | 4 interface endpoints × 24/7 | ~$29 |
+| **CloudWatch Logs** | 10 GB ingestion + storage | ~$5 |
+| **S3 Storage** | Depends on usage | Variable |
+| **CloudWatch Alarms** | 4 alarms | ~$2 |
+| **Total (without VPC endpoints)** | | ~$83/month |
+| **Total (with VPC endpoints)** | | ~$80/month |
+
+**Note:** Using VPC endpoints eliminates NAT Gateway data transfer charges for AWS service traffic and typically results in net cost savings.
+
+## Monitoring and Validation
+
+### CloudWatch Alarms
+
+Enable monitoring by providing an SNS topic ARN:
+
+```hcl
+alarm_sns_topic_arn      = "arn:aws:sns:region:account:ops-alerts"
+alarm_cpu_threshold      = 80  # Alert at 80% CPU
+alarm_memory_threshold   = 80  # Alert at 80% memory
+alarm_evaluation_periods = 2   # Alert after 2 consecutive periods
+```
+
+The module creates alarms for:
+- CPU utilization
+- Memory utilization
+- Running task count
+- Task stopped events
+
+### Verify Deployment
+
+After deployment, verify the Agent is running:
+
+```bash
+# Check service status
+aws ecs describe-services \
+  --cluster <cluster-name> \
+  --services <service-name> \
+  --query 'services[0].{status:status,running:runningCount,desired:desiredCount}'
+
+# Check task health
+aws ecs describe-tasks \
+  --cluster <cluster-name> \
+  --tasks <task-arn> \
+  --query 'tasks[0].{health:healthStatus,status:lastStatus}'
+
+# View logs
+aws logs tail /aws/ecs/rm-agent --follow
+
+# Check alarms (if configured)
+aws cloudwatch describe-alarms --alarm-name-prefix rm-agent
+```
+
+## Troubleshooting
+
+### Tasks Won't Start
+
+Check ECS service events and task stopped reason:
+
+```bash
+# Service events
+aws ecs describe-services \
+  --cluster <cluster> \
+  --services <service> \
+  --query 'services[0].events[:5]'
+
+# Task stopped reason
+aws ecs describe-tasks \
+  --cluster <cluster> \
+  --tasks <task-arn> \
+  --query 'tasks[0].stoppedReason'
+```
+
+**Common issues:**
+- **Image pull errors**: Verify registry credentials in Secrets Manager
+- **Resource constraints**: Check if CPU/memory configuration is valid for Fargate
+- **IAM permissions**: Ensure task execution role can access ECR and Secrets Manager
+
+### Network Connectivity Issues
+
+Verify security group and VPC endpoint configuration:
+
+```bash
+# Check security group rules
+aws ec2 describe-security-group-rules \
+  --filters Name=group-id,Values=<sg-id>
+
+# Verify VPC endpoints
+aws ec2 describe-vpc-endpoints \
+  --filters Name=vpc-id,Values=<vpc-id>
+```
+
+**Common issues:**
+- **No internet access**: Verify NAT Gateway or VPC endpoints are configured
+- **Cannot reach DataGrail**: Check security group allows HTTPS egress
+- **Cannot pull image**: Verify ECR VPC endpoints or NAT Gateway access
+
+### Image Pull Authentication Errors
+
+```bash
+# Verify credentials exist and are valid
+aws secretsmanager get-secret-value \
+  --secret-id <registry-credentials-arn> \
+  --query SecretString --output text | jq '.'
+
+# Check task execution role has permission
+aws iam get-role-policy \
+  --role-name <task-execution-role> \
+  --policy-name datagrail-image-repo-credentials-access
+```
+
+### Database Connection Issues
+
+If the Agent cannot connect to integration databases:
+
+1. **Verify credentials**: Check Secrets Manager/Parameter Store secrets are accessible
+2. **Check network access**: Ensure security groups allow egress to database ports
+3. **Review logs**: Look for connection errors in CloudWatch Logs
+4. **Test connectivity**: Use ECS Exec to test database connections from the task
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -100,34 +383,31 @@ No modules.
 
 | Name | Type |
 |------|------|
-| [aws_alb.datagrail_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/alb) | resource |
-| [aws_alb_target_group.datagrail_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/alb_target_group) | resource |
+| [aws_cloudwatch_event_rule.task_stopped](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
+| [aws_cloudwatch_event_target.task_stopped_sns](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
 | [aws_cloudwatch_log_group.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
-| [aws_ecs_cluster.datagrail_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster) | resource |
+| [aws_cloudwatch_metric_alarm.cpu_utilization](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.memory_utilization](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.running_task_count](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_ecs_cluster.rm_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster) | resource |
 | [aws_ecs_service.service](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_service) | resource |
-| [aws_ecs_task_definition.datagrail_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_task_definition) | resource |
+| [aws_ecs_task_definition.rm_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_task_definition) | resource |
 | [aws_iam_role.task_exec](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.tasks](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.task_exec](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.tasks](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.ecs_task_exec_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.tasks_additional_policies](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
-| [aws_lb_listener.listener](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener) | resource |
-| [aws_route53_record.alb_alias](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route53_record) | resource |
-| [aws_security_group.load_balancer_security_group](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
 | [aws_security_group.service](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
-| [aws_vpc_security_group_egress_rule.alb_to_service](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |
-| [aws_vpc_security_group_egress_rule.service_to_anywhere](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |
-| [aws_vpc_security_group_ingress_rule.additional_to_alb](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
-| [aws_vpc_security_group_ingress_rule.datagrail_to_alb](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
-| [aws_vpc_security_group_ingress_rule.service_from_alb](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [aws_vpc_security_group_egress_rule.service_to_https](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |
 | [aws_iam_policy_document.task_exec_assume](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.task_exec_secrets](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.tasks](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.tasks_assume](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_role.task_exec](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_role) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
-| [aws_route53_zone.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/route53_zone) | data source |
+| [aws_route_table.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/route_table) | data source |
+| [aws_subnet.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnet) | data source |
 
 ## Inputs
 
@@ -136,36 +416,49 @@ No modules.
 | <a name="input_agent_container_cpu"></a> [agent\_container\_cpu](#input\_agent\_container\_cpu) | The CPU allotted for the agent container. | `number` | `1024` | no |
 | <a name="input_agent_container_image"></a> [agent\_container\_image](#input\_agent\_container\_image) | The URI of the agent image. | `string` | n/a | yes |
 | <a name="input_agent_container_memory"></a> [agent\_container\_memory](#input\_agent\_container\_memory) | The memory allotted for the agent container. | `number` | `2048` | no |
-| <a name="input_agent_subdomain"></a> [agent\_subdomain](#input\_agent\_subdomain) | The subdomain of the agent. | `string` | `"datagrail-rm-agent"` | no |
-| <a name="input_bucket_name"></a> [bucket\_name](#input\_bucket\_name) | The name of the S3 bucket to store access and identifier request results. This *must* be the same bucket integrated with DataGrail. | `string` | n/a | yes |
-| <a name="input_certificate_arn"></a> [certificate\_arn](#input\_certificate\_arn) | The ARN of the TLS certificate for the load balancer. | `string` | n/a | yes |
+| <a name="input_alarm_cpu_threshold"></a> [alarm\_cpu\_threshold](#input\_alarm\_cpu\_threshold) | CPU utilization threshold (percentage) for CloudWatch alarm. | `number` | `80` | no |
+| <a name="input_alarm_evaluation_periods"></a> [alarm\_evaluation\_periods](#input\_alarm\_evaluation\_periods) | Number of periods to evaluate for alarm state. | `number` | `2` | no |
+| <a name="input_alarm_memory_threshold"></a> [alarm\_memory\_threshold](#input\_alarm\_memory\_threshold) | Memory utilization threshold (percentage) for CloudWatch alarm. | `number` | `80` | no |
+| <a name="input_alarm_sns_topic_arn"></a> [alarm\_sns\_topic\_arn](#input\_alarm\_sns\_topic\_arn) | SNS topic ARN for CloudWatch alarm notifications. If provided, CloudWatch alarms will be created for CPU utilization, memory utilization, running task count, and task stopped events. | `string` | `null` | no |
+| <a name="input_cloudwatch_log_group_kms_key_id"></a> [cloudwatch\_log\_group\_kms\_key\_id](#input\_cloudwatch\_log\_group\_kms\_key\_id) | The ARN of the KMS key to use for CloudWatch log encryption. If not provided, logs will not be encrypted. | `string` | `null` | no |
 | <a name="input_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#input\_cloudwatch\_log\_group\_name) | Name of CloudWatch log group for ECS cluster. | `string` | `null` | no |
 | <a name="input_cloudwatch_log_retention_in_days"></a> [cloudwatch\_log\_retention\_in\_days](#input\_cloudwatch\_log\_retention\_in\_days) | The retention period (in days) of the agent's CloudWatch log group. | `number` | `30` | no |
 | <a name="input_cluster_arn"></a> [cluster\_arn](#input\_cluster\_arn) | ARN of an existing ECS cluster to place the tasks. | `string` | `null` | no |
-| <a name="input_connections"></a> [connections](#input\_connections) | Connection objects to instantiate. More information can be found in the [documentations](https://docs.datagrail.io/docs/integrations/internal-systems-integrations/request-manager-agent/connections/request-manager-agent-connections-setup). | <pre>list(object({<br/>    name           = string<br/>    uuid           = string<br/>    capabilities   = list(string)<br/>    mode           = string<br/>    connector_type = string<br/>    queries = object({<br/>      access      = optional(list(any), [])<br/>      delete      = optional(list(any), [])<br/>      optout      = optional(list(any), [])<br/>      identifiers = optional(map(list(any)), {})<br/>      test        = optional(list(any), [])<br/>    })<br/>    credentials_location = string<br/>  }))</pre> | `[]` | no |
-| <a name="input_credentials_manager"></a> [credentials\_manager](#input\_credentials\_manager) | The credentials manager used to store the credentials made available to the agent, e.g. the agent's OAuth client credentials, DataGrail callback token, and connector credentials. | `string` | `"AWSSecretsManager"` | no |
-| <a name="input_customer_domain"></a> [customer\_domain](#input\_customer\_domain) | The fully qualified domain name of your DataGrail environment, e.g. 'acme.datagrail.io' | `string` | n/a | yes |
-| <a name="input_datagrail_agent_client_credentials_arn"></a> [datagrail\_agent\_client\_credentials\_arn](#input\_datagrail\_agent\_client\_credentials\_arn) | The ARN of the Request Manager Agent Client Credentials in Secrets Manager or Parameter Store. FOr more information on creating the secret, see the | `string` | n/a | yes |
-| <a name="input_datagrail_callback_token_arn"></a> [datagrail\_callback\_token\_arn](#input\_datagrail\_callback\_token\_arn) | The ARN of the callback token in Secrets Manager or Parameter Store. For more information on creating the secret, see the [Callback Token](./README.md#callback-token) section in the README. | `string` | n/a | yes |
 | <a name="input_enable_cloudwatch_logging"></a> [enable\_cloudwatch\_logging](#input\_enable\_cloudwatch\_logging) | Determines whether CloudWatch logging is configured for this container definition. Set to `false` to use other logging drivers. | `bool` | `true` | no |
-| <a name="input_hosted_zone_name"></a> [hosted\_zone\_name](#input\_hosted\_zone\_name) | The name of the Route53 hosted zone where the public DataGrail agent subdomain will be created. | `string` | `null` | no |
-| <a name="input_image_registry_credentials_arn"></a> [image\_registry\_credentials\_arn](#input\_image\_registry\_credentials\_arn) | The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README. | `string` | n/a | yes |
-| <a name="input_load_balancer_ingress_rules"></a> [load\_balancer\_ingress\_rules](#input\_load\_balancer\_ingress\_rules) | Additional ingress rules for the load balancer security group. | <pre>map(object({<br/>    cidr_ipv4   = optional(string)<br/>    cidr_ipv6   = optional(string)<br/>    description = optional(string)<br/>  }))</pre> | `{}` | no |
-| <a name="input_load_balancer_ssl_policy"></a> [load\_balancer\_ssl\_policy](#input\_load\_balancer\_ssl\_policy) | Load balancer SSL policy. | `string` | `"ELBSecurityPolicy-TLS13-1-2-2021-06"` | no |
+| <a name="input_enable_deployment_circuit_breaker"></a> [enable\_deployment\_circuit\_breaker](#input\_enable\_deployment\_circuit\_breaker) | Enable deployment circuit breaker to automatically roll back failed deployments. | `bool` | `true` | no |
+| <a name="input_enable_ecs_managed_tags"></a> [enable\_ecs\_managed\_tags](#input\_enable\_ecs\_managed\_tags) | Enable ECS-managed tags for the service. | `bool` | `true` | no |
+| <a name="input_integration_credentials_arns"></a> [integration\_credentials\_arns](#input\_integration\_credentials\_arns) | The ARNs of the credentials for the RM Agent integrations. | `list(string)` | `[]` | no |
 | <a name="input_log_configuration"></a> [log\_configuration](#input\_log\_configuration) | The log configuration for the container. For more information see [LogConfiguration](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_LogConfiguration.html) | <pre>object({<br/>    logDriver = optional(string)<br/>    options   = optional(map(string))<br/>    secretOptions = optional(list(object({<br/>      name      = string<br/>      valueFrom = string<br/>    })))<br/>  })</pre> | `{}` | no |
-| <a name="input_loglevel"></a> [loglevel](#input\_loglevel) | The loglevel for the `datagrail-rm-agent` container.<br/>**WARNING:** The `DEBUG` loglevel will expose PII and credentials. | `string` | `"INFO"` | no |
-| <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | The ID(s) of the private subnet(s) to put the datagrail-rm-agent ECS task(s) into. | `list(string)` | n/a | yes |
-| <a name="input_project_name"></a> [project\_name](#input\_project\_name) | The name of the project. The value will be used in resource names as a prefix. | `string` | `"datagrail-rm-agent"` | no |
-| <a name="input_public_subnet_ids"></a> [public\_subnet\_ids](#input\_public\_subnet\_ids) | The IDs of the public subnets for the load balancer to be placed into. | `list(string)` | n/a | yes |
+| <a name="input_loglevel"></a> [loglevel](#input\_loglevel) | The loglevel for the `rm-agent` container.<br/>**WARNING:** The `DEBUG` loglevel will expose PII and credentials. | `string` | `"INFO"` | no |
+| <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | The ID(s) of the private subnet(s) to put the `rm-agent` ECS task(s) into. | `list(string)` | n/a | yes |
+| <a name="input_project_name"></a> [project\_name](#input\_project\_name) | The name of the project. The value will be used in resource names as a prefix. | `string` | `"rm-agent"` | no |
+| <a name="input_propagate_tags"></a> [propagate\_tags](#input\_propagate\_tags) | Specifies whether to propagate tags from the task definition or service to tasks. Valid values: TASK\_DEFINITION, SERVICE, or NONE. | `string` | `"SERVICE"` | no |
+| <a name="input_rm_agent_image_registry_credentials_arn"></a> [rm\_agent\_image\_registry\_credentials\_arn](#input\_rm\_agent\_image\_registry\_credentials\_arn) | The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README. | `string` | n/a | yes |
+| <a name="input_rm_credentials_manager"></a> [rm\_credentials\_manager](#input\_rm\_credentials\_manager) | The credentials manager used to store the the DataGrail platform API key and connector credentials. | <pre>object({<br/>    provider = string<br/>  })</pre> | <pre>{<br/>  "provider": "AWSSecretsManager"<br/>}</pre> | no |
+| <a name="input_rm_customer_domain"></a> [rm\_customer\_domain](#input\_rm\_customer\_domain) | The fully qualified domain name of your DataGrail environment, e.g. 'acme.datagrail.io' | `string` | n/a | yes |
+| <a name="input_rm_job_timeout"></a> [rm\_job\_timeout](#input\_rm\_job\_timeout) | Max time (seconds) for a single job before timeout | `number` | `null` | no |
+| <a name="input_rm_platform_credentials_location"></a> [rm\_platform\_credentials\_location](#input\_rm\_platform\_credentials\_location) | The ARN of the DataGrail platform API key in Secrets Manager or Parameter Store. For more information on creating the secret, see the [DataGrail Platform API Key](./README.md#callback-token) section in the README. | `string` | n/a | yes |
+| <a name="input_rm_storage_manager"></a> [rm\_storage\_manager](#input\_rm\_storage\_manager) | The name of the S3 bucket to store access and identifier request results. This *must* be the same bucket integrated with DataGrail. | <pre>object({<br/>    provider = string<br/>    bucket   = string<br/>  })</pre> | `null` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to all resources created by this module. These will be merged with default tags. | `map(string)` | `{}` | no |
 | <a name="input_task_exec_iam_role_name"></a> [task\_exec\_iam\_role\_name](#input\_task\_exec\_iam\_role\_name) | The name of an existing task execution role to use. | `string` | `null` | no |
 | <a name="input_tasks_iam_role_policies"></a> [tasks\_iam\_role\_policies](#input\_tasks\_iam\_role\_policies) | List of additional IAM role policy ARNs to attach to the IAM task role. | `list(string)` | `[]` | no |
-| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | The ID of the VPC to place the agent into. | `string` | n/a | yes |
+| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | The ID of the VPC to place the Agent into. | `string` | n/a | yes |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| <a name="output_load_balancer_arn"></a> [load\_balancer\_arn](#output\_load\_balancer\_arn) | The ARN of the agent load balancer. |
-| <a name="output_load_balancer_dns_name"></a> [load\_balancer\_dns\_name](#output\_load\_balancer\_dns\_name) | The DNS name of the agent load balancer. |
-| <a name="output_route53_record"></a> [route53\_record](#output\_route53\_record) | The Route53 alias created and attached to the load balancer. |
+| <a name="output_cloudwatch_log_group_arn"></a> [cloudwatch\_log\_group\_arn](#output\_cloudwatch\_log\_group\_arn) | ARN of the CloudWatch log group (if enabled) |
+| <a name="output_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#output\_cloudwatch\_log\_group\_name) | Name of the CloudWatch log group (if enabled) |
+| <a name="output_cluster_arn"></a> [cluster\_arn](#output\_cluster\_arn) | ARN of the ECS cluster (either created or provided via var.cluster\_arn) |
+| <a name="output_cluster_name"></a> [cluster\_name](#output\_cluster\_name) | Name of the ECS cluster |
+| <a name="output_security_group_arn"></a> [security\_group\_arn](#output\_security\_group\_arn) | ARN of the security group attached to the ECS service |
+| <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id) | ID of the security group attached to the ECS service |
+| <a name="output_service_arn"></a> [service\_arn](#output\_service\_arn) | ARN of the ECS service |
+| <a name="output_service_name"></a> [service\_name](#output\_service\_name) | Name of the ECS service |
+| <a name="output_task_definition_arn"></a> [task\_definition\_arn](#output\_task\_definition\_arn) | ARN of the task definition |
+| <a name="output_task_execution_role_arn"></a> [task\_execution\_role\_arn](#output\_task\_execution\_role\_arn) | ARN of the task execution IAM role (either created or provided) |
+| <a name="output_task_execution_role_name"></a> [task\_execution\_role\_name](#output\_task\_execution\_role\_name) | Name of the task execution IAM role |
+| <a name="output_task_role_arn"></a> [task\_role\_arn](#output\_task\_role\_arn) | ARN of the task IAM role |
+| <a name="output_task_role_name"></a> [task\_role\_name](#output\_task\_role\_name) | Name of the task IAM role |
 <!-- END_TF_DOCS -->

@@ -1,79 +1,178 @@
 provider "aws" {
-  region  = "us-west-2"
-  profile = "datagrail-terraform-dev"
+  region = "us-west-2"
+  # profile = "your-aws-profile" # Uncomment and set your AWS profile if needed
 }
 
-module "datagrail-rm-agent" {
-  source = "../.."
+################################################################################
+# Complete Example - All Configuration Options
+################################################################################
 
-  # VPC
+module "rm_agent" {
+  source = "git::https://github.com/datagrail/terraform-aws-ecs-rm-agent.git?ref=v1.0.0"
+
+  # Project Configuration
+  project_name = "rm-agent-prod"
+
+  ################################################################################
+  # VPC and Network Configuration
+  ################################################################################
+
   vpc_id             = "vpc-XXXX"
-  public_subnet_ids  = ["subnet-XXXX", "subnet-XXXX"]
-  private_subnet_ids = ["subnet-XXXX", "subnet-XXXX"]
+  private_subnet_ids = ["subnet-XXXX", "subnet-YYYY"]
 
+  ################################################################################
+  # DataGrail Environment Configuration
+  ################################################################################
 
-  # DATAGRAIL_AGENT_CONFIG environment variable
-  customer_domain                        = "example.datagrail.io"
-  bucket_name                            = "datagrail-bucket"
-  datagrail_callback_token_arn           = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.callback"
-  datagrail_agent_client_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.client-credentials"
+  rm_customer_domain = "example.datagrail.io"
 
-  connections = [
-    {
-      name           = "Customer Database"
-      uuid           = "ff95204a-56f8-4726-b541-56dfa4a2b507"
-      capabilities   = ["privacy/delete", "privacy/identifiers", "privacy/access"]
-      mode           = "live"
-      connector_type = "Snowflake"
-      queries = {
-        access = ["CALL dsr('access', %(email)s)"]
-        delete = ["CALL dsr('deletion', %(email)s)"]
-        identifiers = {
-          customer_id        = ["SELECT TO_VARCHAR(id) AS user_id FROM CUSTOMER.CUSTOMER WHERE EMAIL = %(email)s"]
-          device_id          = ["SELECT TO_VARCHAR(DEVICE_ID) as service_id FROM CUSTOMER.DEVICE D JOIN CUSTOMER.CUSTOMER C ON D.USER_ID = C.ID WHERE EMAIL = %(email)s"]
-          last_sign_in_ip    = ["SELECT TO_VARCHAR(LAST_SIGN_IN_IP) AS browser_id from CUSTOMER.CUSTOMER C JOIN CUSTOMER.DEVICE D ON C.ID = D.USER_ID WHERE C.EMAIL = %(email)s"]
-          current_sign_in_ip = ["SELECT TO_VARCHAR(CURRENT_SIGN_IN_IP) AS browser_id from CUSTOMER.CUSTOMER C JOIN CUSTOMER.DEVICE D ON C.ID = D.USER_ID WHERE C.EMAIL = %(email)s"]
-        }
-      }
-      credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.snowflake"
-    },
-    {
-      name           = "Device Database"
-      uuid           = "a2b55762-0aa8-4872-8bc3-1ff908f7ebf7"
-      capabilities   = ["privacy/delete", "privacy/access"]
-      mode           = "live"
-      connector_type = "Snowflake"
-      queries = {
-        access = ["SELECT * FROM CUSTOMER.DEVICE WHERE DEVICE_ID = %(service_id)s"]
-        delete = ["DELETE FROM CUSTOMER.DEVICE WHERE DEVICE_ID = %(service_id)s"]
-      }
-      credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.snowflake"
-    }
-  ]
-
-  # Additional Application Load Balancer Security Group rules
-  load_balancer_ingress_rules = {
-    local-machine = {
-      description = "Allow ingress from local machine for testing."
-      cidr_ipv4   = "245.11.82.175/32"
-    }
+  # Storage configuration
+  rm_storage_manager = {
+    provider = "AWSS3"
+    bucket   = "datagrail-rm-agent-results"
   }
 
-  # ECS Task Definition and Service
-  image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail.rm-agent.image-registry"
-  agent_container_image          = "contairium.datagrail.io/rm-agent:v0.14.0"
-  agent_container_cpu            = 1024
-  agent_container_memory         = 2048
+  # Credentials manager
+  rm_credentials_manager = {
+    provider = "AWSSecretsManager" # or "AWSParameterStore"
+  }
 
-  # CloudWatch
+  # Platform credentials location
+  rm_platform_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/platform-credentials"
+
+  # Optional: Integration credentials (database connections, external APIs)
+  integration_credentials_arns = [
+    # "arn:aws:secretsmanager:us-west-2:XXXX:secret:mysql-db-credentials",
+    # "arn:aws:ssm:us-west-2:XXXX:parameter/postgres/connection",
+  ]
+
+  # Optional: Job timeout in seconds
+  rm_job_timeout = 3600
+
+  # Log level
+  loglevel = "INFO" # INFO, DEBUG, WARNING
+
+  ################################################################################
+  # ECS Cluster Configuration
+  ################################################################################
+
+  # Optional: Use existing cluster
+  cluster_arn = null # "arn:aws:ecs:us-west-2:XXXX:cluster/my-cluster"
+
+  ################################################################################
+  # ECS Task Configuration
+  ################################################################################
+
+  # Container image
+  agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
+  rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/image-registry-credentials"
+
+  # CPU and Memory (must be valid Fargate combinations)
+  agent_container_cpu    = 1024
+  agent_container_memory = 2048
+
+  ################################################################################
+  # ECS Service Configuration
+  ################################################################################
+
+  # Deployment configuration
+  enable_deployment_circuit_breaker = true
+  enable_ecs_managed_tags           = true
+  propagate_tags                    = "SERVICE" # TASK_DEFINITION, SERVICE, or NONE
+
+  ################################################################################
+  # IAM Configuration
+  ################################################################################
+
+  # Optional: Use existing task execution role
+  task_exec_iam_role_name = null
+
+  # Optional: Additional IAM policies for task role
+  tasks_iam_role_policies = [
+    # "arn:aws:iam::aws:policy/CustomPolicy"
+  ]
+
+  ################################################################################
+  # CloudWatch Logging
+  ################################################################################
+
   enable_cloudwatch_logging        = true
-  cloudwatch_log_group_name        = "/aws/ecs/rm-agent"
-  cloudwatch_log_retention_in_days = 30
-  loglevel                         = "DEBUG"
+  cloudwatch_log_group_name        = "/aws/ecs/rm-agent-prod"
+  cloudwatch_log_retention_in_days = 90
 
-  # Route53/Certificate Manager
-  hosted_zone_name = "dg-taylor.com"
-  agent_subdomain  = "rm-agent"
-  certificate_arn  = "arn:aws:acm:us-west-2:XXXX:certificate/14f3f47d-e653-4856-a01a-40d0e64df244"
+  # Log encryption with KMS
+  cloudwatch_log_group_kms_key_id = null # "arn:aws:kms:us-west-2:XXXX:key/abc-123"
 
+  # Optional: Custom log configuration
+  log_configuration = {
+    # logDriver = "awslogs"  # Uncomment to override
+    # options = {
+    #   "awslogs-create-group" = "true"
+    # }
+  }
+
+  ################################################################################
+  # CloudWatch Alarms (Optional but Recommended for Production)
+  ################################################################################
+
+  # Enable alarms by providing an SNS topic
+  alarm_sns_topic_arn = null # "arn:aws:sns:us-west-2:XXXX:ops-alerts"
+
+  # Alarm thresholds
+  alarm_cpu_threshold      = 80
+  alarm_memory_threshold   = 80
+  alarm_evaluation_periods = 2
+
+  ################################################################################
+  # Resource Tagging
+  ################################################################################
+
+  tags = {
+    Environment = "production"
+    Team        = "platform"
+    CostCenter  = "engineering"
+    Project     = "data-privacy"
+    ManagedBy   = "Terraform"
+    Application = "datagrail-rm-agent"
+    Compliance  = "SOC2"
+  }
+}
+
+################################################################################
+# Outputs
+################################################################################
+
+output "cluster_arn" {
+  description = "ECS cluster ARN"
+  value       = module.rm_agent.cluster_arn
+}
+
+output "service_name" {
+  description = "ECS service name"
+  value       = module.rm_agent.service_name
+}
+
+output "service_arn" {
+  description = "ECS service ARN"
+  value       = module.rm_agent.service_arn
+}
+
+output "security_group_id" {
+  description = "Security group ID"
+  value       = module.rm_agent.security_group_id
+}
+
+output "task_role_arn" {
+  description = "Task IAM role ARN"
+  value       = module.rm_agent.task_role_arn
+}
+
+output "task_execution_role_arn" {
+  description = "Task execution IAM role ARN"
+  value       = module.rm_agent.task_execution_role_arn
+}
+
+output "cloudwatch_log_group_name" {
+  description = "CloudWatch log group name"
+  value       = module.rm_agent.cloudwatch_log_group_name
 }
