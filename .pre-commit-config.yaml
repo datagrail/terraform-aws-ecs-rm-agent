@@ -31,7 +31,7 @@ repos:
 
   ### Terraform Hooks
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: 18cead24f7d3df230683a008aaf903f43e8457d6  # v1.102.0
+    rev: d0e12caebb2ab0ee8bf98181c8bfe9702bca103d  # v1.105.0
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
