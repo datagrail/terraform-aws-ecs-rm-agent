@@ -18,7 +18,7 @@ repos:
 
   ### Github Action Hooks
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: b32b2911704f67f5319d0a7630394cb6b07df851  # 0.35.0
+    rev: 13614ab716a3113145f1294ed259d9fbe5678ff3  # 0.37.1
     hooks:
       - id: check-github-workflows
         args: [ "--verbose" ]
