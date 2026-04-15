@@ -24,7 +24,7 @@ repos:
         args: [ "--verbose" ]
 
   - repo: https://github.com/rhysd/actionlint
-    rev: a443f344ff32813837fa49f7aa6cbc478d770e62  # v1.7.9
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # v1.7.12
     hooks:
       - id: actionlint
         files: ^\.github/workflows/
