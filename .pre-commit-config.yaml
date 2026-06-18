@@ -31,7 +31,7 @@ repos:
 
   ### Terraform Hooks
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: d0e12caebb2ab0ee8bf98181c8bfe9702bca103d  # v1.105.0
+    rev: d61ded22bf9aa0f757303ebcbb0d6d71c4b54015  # v1.106.0
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
@@ -51,7 +51,7 @@ repos:
           - --hook-config=--add-to-existing-file=true     # Boolean. true or false
           - --hook-config=--create-file-if-not-exist=true # Boolean. true or false
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: a4727cbbcd26d7098e96b9cb738169b59711ae51  # v1.24.1
+    rev: 9257c6050c0261b8c57e712f632dc4a8010109a9  # v1.25.2
     hooks:
       - id: zizmor
         files: ^\.github/(workflows|actions)/
