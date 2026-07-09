@@ -18,7 +18,7 @@ repos:
 
   ### Github Action Hooks
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: f805888065fdb6162e1f800e50bb9460cbd223d6  # 0.37.2
+    rev: 5030dca3047414c338091455ac41803200ec1f0f  # 0.37.3
     hooks:
       - id: check-github-workflows
         args: [ "--verbose" ]
@@ -31,7 +31,7 @@ repos:
 
   ### Terraform Hooks
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: d61ded22bf9aa0f757303ebcbb0d6d71c4b54015  # v1.106.0
+    rev: 05fd71a57a467ccf5598f7e836d3af4cf9225abb  # v1.108.0
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
@@ -51,7 +51,7 @@ repos:
           - --hook-config=--add-to-existing-file=true     # Boolean. true or false
           - --hook-config=--create-file-if-not-exist=true # Boolean. true or false
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: 9257c6050c0261b8c57e712f632dc4a8010109a9  # v1.25.2
+    rev: e3eebf65325ccc992422292cb7a4baee967cf815  # v1.26.1
     hooks:
       - id: zizmor
         files: ^\.github/(workflows|actions)/
