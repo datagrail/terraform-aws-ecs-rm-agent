@@ -33,7 +33,7 @@ The Request Manager Agent is distributed as a Docker image, enabling deployment 
 
 Deploying the Agent in your network gives you complete control of the connection to your internal systems.
 
-The Agent uses an **egress-only architecture**, meaning it only makes outbound connectoins and never accepts inbound traffic. This eliminates the need for exposed endpints and inbound firewall rules. The Agent polls DataGrail for work over secure, encrypted connections, then connects to your internal systems using credentials you control. Internal system access follows the principle of least privelege by only granting access to only what's needed to fulfill the request.
+The Agent uses an **egress-only architecture**, meaning it only makes outbound connections and never accepts inbound traffic. This eliminates the need for exposed endpoints and inbound firewall rules. The Agent polls DataGrail for work over secure, encrypted connections, then connects to your internal systems using credentials you control. Internal system access follows the principle of least privilege by only granting access to only what's needed to fulfill the request.
 
 ## Flexible Connections
 
