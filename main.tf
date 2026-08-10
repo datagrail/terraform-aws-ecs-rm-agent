@@ -272,8 +272,11 @@ resource "aws_ecs_task_definition" "rm_agent" {
             value = jsonencode(var.rm_credentials_manager)
           },
           {
-            name  = "RM_STORAGE_MANAGER"
-            value = var.rm_storage_manager != null ? jsonencode(var.rm_storage_manager) : null
+            name = "RM_STORAGE_MANAGER"
+            value = var.rm_storage_manager != null ? jsonencode({
+              provider = var.rm_storage_manager.provider
+              options  = { bucket = var.rm_storage_manager.bucket }
+            }) : null
           },
           {
             name  = "RM_JOB_TIMEOUT_SECONDS"
