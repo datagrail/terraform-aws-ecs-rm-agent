@@ -274,12 +274,12 @@ variable "agent_container_memory" {
 # Secrets
 ################################################################################
 
-variable "rm_agent_image_registry_credentials_arn" {
+variable "rm_image_registry_credentials_location" {
   description = "The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README."
   type        = string
 }
 
-variable "integration_credentials_arns" {
+variable "integration_credentials_locations" {
   description = "The ARNs of the credentials for the RM Agent integrations."
   type        = list(string)
   default     = []

@@ -37,8 +37,8 @@ This example showcases **all configuration options** including:
      rm_platform_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-platform-key"
 
      # Container Configuration
-     agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
-     rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
+     agent_container_image                  = "contairium.datagrail.io/rm-agent:v1.0.2"
+     rm_image_registry_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
 
      # S3 Storage
      rm_storage_manager = {
@@ -47,7 +47,7 @@ This example showcases **all configuration options** including:
      }
 
      # Integration Credentials
-     integration_credentials_arns = [
+     integration_credentials_locations = [
        # "arn:aws:secretsmanager:region:account:secret:mysql-db-credentials",
        # "arn:aws:ssm:region:account:parameter/postgres/connection",
      ]
@@ -96,7 +96,7 @@ alarm_evaluation_periods = 2
 
 ```hcl
 # Grant task role access to database credentials
-integration_credentials_arns = [
+integration_credentials_locations = [
   "arn:aws:secretsmanager:region:account:secret:mysql-db-credentials",
   "arn:aws:ssm:region:account:parameter/postgres/connection"
 ]

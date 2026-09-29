@@ -15,10 +15,10 @@ module "rm_agent" {
   rm_platform_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/platform_api_key"
 
   # Required: Container Configuration
-  agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
-  rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/rm-agent/image-registry"
+  agent_container_image                  = "contairium.datagrail.io/rm-agent:v1.0.2"
+  rm_image_registry_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/rm-agent/image-registry"
 
-  integration_credentials_arns = ["arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail-agent/snowflake"]
+  integration_credentials_locations = ["arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail-agent/snowflake"]
   # All other variables use their default values:
   # - project_name: "rm-agent"
   # - rm_credentials_manager: { provider = "AWSSecretsManager" }
