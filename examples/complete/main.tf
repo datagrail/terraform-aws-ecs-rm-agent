@@ -41,7 +41,7 @@ module "rm_agent" {
   rm_platform_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/platform-credentials"
 
   # Optional: Integration credentials (database connections, external APIs)
-  integration_credentials_arns = [
+  integration_credentials_locations = [
     # "arn:aws:secretsmanager:us-west-2:XXXX:secret:mysql-db-credentials",
     # "arn:aws:ssm:us-west-2:XXXX:parameter/postgres/connection",
   ]
@@ -64,8 +64,8 @@ module "rm_agent" {
   ################################################################################
 
   # Container image
-  agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
-  rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/image-registry-credentials"
+  agent_container_image                  = "contairium.datagrail.io/rm-agent:v1.0.2"
+  rm_image_registry_credentials_location = "arn:aws:secretsmanager:us-west-2:XXXX:secret:datagrail/image-registry-credentials"
 
   # CPU and Memory (must be valid Fargate combinations)
   agent_container_cpu    = 1024

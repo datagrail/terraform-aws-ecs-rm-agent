@@ -66,7 +66,7 @@ data "aws_iam_policy_document" "task_exec_secrets" {
     ]
 
     resources = [
-      var.rm_agent_image_registry_credentials_arn
+      var.rm_image_registry_credentials_location
     ]
   }
 }
@@ -154,7 +154,7 @@ data "aws_iam_policy_document" "tasks" {
   }
 
   dynamic "statement" {
-    for_each = length(var.integration_credentials_arns) > 0 ? [1] : []
+    for_each = length(var.integration_credentials_locations) > 0 ? [1] : []
     content {
       sid = "IntegrationCredentialsAccess"
 
@@ -163,7 +163,7 @@ data "aws_iam_policy_document" "tasks" {
         "ssm:GetParameter"
       ]
 
-      resources = var.integration_credentials_arns
+      resources = var.integration_credentials_locations
     }
   }
 }
@@ -272,8 +272,11 @@ resource "aws_ecs_task_definition" "rm_agent" {
             value = jsonencode(var.rm_credentials_manager)
           },
           {
-            name  = "RM_STORAGE_MANAGER"
-            value = var.rm_storage_manager != null ? jsonencode(var.rm_storage_manager) : null
+            name = "RM_STORAGE_MANAGER"
+            value = var.rm_storage_manager != null ? jsonencode({
+              provider = var.rm_storage_manager.provider
+              options  = { bucket = var.rm_storage_manager.bucket }
+            }) : null
           },
           {
             name  = "RM_JOB_TIMEOUT_SECONDS"
@@ -288,7 +291,7 @@ resource "aws_ecs_task_definition" "rm_agent" {
       cpu   = 0
       image = var.agent_container_image
       repositoryCredentials = {
-        credentialsParameter = var.rm_agent_image_registry_credentials_arn
+        credentialsParameter = var.rm_image_registry_credentials_location
       }
       healthCheck = {
         "retries" = 3

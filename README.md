@@ -33,7 +33,7 @@ The Request Manager Agent is distributed as a Docker image, enabling deployment 
 
 Deploying the Agent in your network gives you complete control of the connection to your internal systems.
 
-The Agent uses an **egress-only architecture**, meaning it only makes outbound connectoins and never accepts inbound traffic. This eliminates the need for exposed endpints and inbound firewall rules. The Agent polls DataGrail for work over secure, encrypted connections, then connects to your internal systems using credentials you control. Internal system access follows the principle of least privelege by only granting access to only what's needed to fulfill the request.
+The Agent uses an **egress-only architecture**, meaning it only makes outbound connections and never accepts inbound traffic. This eliminates the need for exposed endpoints and inbound firewall rules. The Agent polls DataGrail for work over secure, encrypted connections, then connects to your internal systems using credentials you control. Internal system access follows the principle of least privilege by only granting access to only what's needed to fulfill the request.
 
 ## Flexible Connections
 
@@ -58,7 +58,7 @@ Create a secret in Secrets Manager with the following key/value pairs:
 } 
 ```
 
-Once the secret has been created, reference the secret's ARN in the `rm_agent_image_registry_credentials_arn` variable in the configuration. The module will handle specifying the credentials in the Task Definition.
+Once the secret has been created, reference the secret's ARN in the `rm_image_registry_credentials_location` variable in the configuration. The module will handle specifying the credentials in the Task Definition.
 
 For more information about using non-AWS container images in AWS, see AWS's [documentation](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html).
 
@@ -79,10 +79,10 @@ Once the secret has been created, reference the secret's ARN in the `rm_platform
 
 ### Integration Credentials (Optional)
 
-Store databases or APIs credentials in Secrets Manager or Parameter Store and reference them using the `integration_credentials_arns` variable. The module will grant the task role read access to these secrets.
+Store databases or APIs credentials in Secrets Manager or Parameter Store and reference them using the `integration_credentials_locations` variable. The module will grant the task role read access to these secrets.
 
 ```hcl
-integration_credentials_arns = [
+integration_credentials_locations = [
   "arn:aws:secretsmanager:region:account:secret:mysql-db-credentials",
   "arn:aws:ssm:region:account:parameter/postgres/connection"
 ]
@@ -213,8 +213,8 @@ module "rm_agent" {
   rm_platform_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-platform-key"
 
   # Container Configuration
-  agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
-  rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
+  agent_container_image                  = "contairium.datagrail.io/rm-agent:v1.0.2"
+  rm_image_registry_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
 
   # Optional: S3 Storage
   rm_storage_manager = {
@@ -367,13 +367,13 @@ If the Agent cannot connect to integration databases:
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.0.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.66.0 |
 
 ## Modules
 
@@ -427,15 +427,15 @@ No modules.
 | <a name="input_enable_cloudwatch_logging"></a> [enable\_cloudwatch\_logging](#input\_enable\_cloudwatch\_logging) | Determines whether CloudWatch logging is configured for this container definition. Set to `false` to use other logging drivers. | `bool` | `true` | no |
 | <a name="input_enable_deployment_circuit_breaker"></a> [enable\_deployment\_circuit\_breaker](#input\_enable\_deployment\_circuit\_breaker) | Enable deployment circuit breaker to automatically roll back failed deployments. | `bool` | `true` | no |
 | <a name="input_enable_ecs_managed_tags"></a> [enable\_ecs\_managed\_tags](#input\_enable\_ecs\_managed\_tags) | Enable ECS-managed tags for the service. | `bool` | `true` | no |
-| <a name="input_integration_credentials_arns"></a> [integration\_credentials\_arns](#input\_integration\_credentials\_arns) | The ARNs of the credentials for the RM Agent integrations. | `list(string)` | `[]` | no |
+| <a name="input_integration_credentials_locations"></a> [integration\_credentials\_locations](#input\_integration\_credentials\_locations) | The ARNs of the credentials for the RM Agent integrations. | `list(string)` | `[]` | no |
 | <a name="input_log_configuration"></a> [log\_configuration](#input\_log\_configuration) | The log configuration for the container. For more information see [LogConfiguration](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_LogConfiguration.html) | <pre>object({<br/>    logDriver = optional(string)<br/>    options   = optional(map(string))<br/>    secretOptions = optional(list(object({<br/>      name      = string<br/>      valueFrom = string<br/>    })))<br/>  })</pre> | `{}` | no |
 | <a name="input_loglevel"></a> [loglevel](#input\_loglevel) | The loglevel for the `rm-agent` container.<br/>**WARNING:** The `DEBUG` loglevel will expose PII and credentials. | `string` | `"INFO"` | no |
 | <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | The ID(s) of the private subnet(s) to put the `rm-agent` ECS task(s) into. | `list(string)` | n/a | yes |
 | <a name="input_project_name"></a> [project\_name](#input\_project\_name) | The name of the project. The value will be used in resource names as a prefix. | `string` | `"rm-agent"` | no |
 | <a name="input_propagate_tags"></a> [propagate\_tags](#input\_propagate\_tags) | Specifies whether to propagate tags from the task definition or service to tasks. Valid values: TASK\_DEFINITION, SERVICE, or NONE. | `string` | `"SERVICE"` | no |
-| <a name="input_rm_agent_image_registry_credentials_arn"></a> [rm\_agent\_image\_registry\_credentials\_arn](#input\_rm\_agent\_image\_registry\_credentials\_arn) | The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README. | `string` | n/a | yes |
 | <a name="input_rm_credentials_manager"></a> [rm\_credentials\_manager](#input\_rm\_credentials\_manager) | The credentials manager used to store the the DataGrail platform API key and connector credentials. | <pre>object({<br/>    provider = string<br/>  })</pre> | <pre>{<br/>  "provider": "AWSSecretsManager"<br/>}</pre> | no |
 | <a name="input_rm_customer_domain"></a> [rm\_customer\_domain](#input\_rm\_customer\_domain) | The fully qualified domain name of your DataGrail environment, e.g. 'acme.datagrail.io' | `string` | n/a | yes |
+| <a name="input_rm_image_registry_credentials_location"></a> [rm\_image\_registry\_credentials\_location](#input\_rm\_image\_registry\_credentials\_location) | The ARN of the DataGrail Docker image registry credentials in AWS Secrets Manager. For more information on creating the secret, see the [Docker Image Registry Credentials](./README.md#docker-image-registry-credentials) section in the README. | `string` | n/a | yes |
 | <a name="input_rm_job_timeout"></a> [rm\_job\_timeout](#input\_rm\_job\_timeout) | Max time (seconds) for a single job before timeout | `number` | `null` | no |
 | <a name="input_rm_platform_credentials_location"></a> [rm\_platform\_credentials\_location](#input\_rm\_platform\_credentials\_location) | The ARN of the DataGrail platform API key in Secrets Manager or Parameter Store. For more information on creating the secret, see the [DataGrail Platform API Key](./README.md#callback-token) section in the README. | `string` | n/a | yes |
 | <a name="input_rm_storage_manager"></a> [rm\_storage\_manager](#input\_rm\_storage\_manager) | The name of the S3 bucket to store access and identifier request results. This *must* be the same bucket integrated with DataGrail. | <pre>object({<br/>    provider = string<br/>    bucket   = string<br/>  })</pre> | `null` | no |

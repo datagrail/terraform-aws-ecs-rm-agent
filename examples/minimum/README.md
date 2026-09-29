@@ -15,7 +15,7 @@ This example only sets the **required variables**:
 The following optional features use their default values:
 
 - **S3 Storage**: `rm_storage_manager = null` (no S3 bucket configured)
-- **Integration Credentials**: `integration_credentials_arns = []` (no additional secrets)
+- **Integration Credentials**: `integration_credentials_locations = []` (no additional secrets)
 - **Monitoring**: No CloudWatch alarms (no SNS topic specified)
 - **Log Encryption**: CloudWatch logs are unencrypted
 - **Additional IAM Policies**: `tasks_iam_role_policies = []` (no custom policies)
@@ -58,8 +58,8 @@ For detailed prerequisites, see the main [README](../../README.md#prerequisites)
      rm_platform_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-platform-key"
 
      # Container Configuration
-     agent_container_image                   = "contairium.datagrail.io/rm-agent:v1.0.2"
-     rm_agent_image_registry_credentials_arn = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
+     agent_container_image                  = "contairium.datagrail.io/rm-agent:v1.0.2"
+     rm_image_registry_credentials_location = "arn:aws:secretsmanager:region:account:secret:datagrail-registry-creds"
    }
    ```
 
@@ -79,7 +79,7 @@ After deploying the minimum example:
 1. **Verify deployment** - See [Monitoring and Validation](../../README.md#monitoring-and-validation)
 2. **Add monitoring** - Configure CloudWatch alarms with an SNS topic
 3. **Enable S3 storage** - Add `rm_storage_manager` configuration
-4. **Add integration credentials** - Use `integration_credentials_arns` for database access
+4. **Add integration credentials** - Use `integration_credentials_locations` for database access
 5. **Review the [Complete Example](../complete/)** for additional features
 
 ## Additional Documentation
